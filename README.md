@@ -1,45 +1,54 @@
 # ════════════════════════════════════════════════════════════════════
-# DARS 1: Pytest bilan tanishuv
+# 1-BOSQICH: Loyihalash va repo skeleton
 # ════════════════════════════════════════════════════════════════════
 
-# ─── kalkulyator.py ───
-def qoshish(a, b):
-    return a + b
+# Bu dars kod yozishdan ko'ra REJALASHTIRISHGA bag'ishlangan.
+# Quyida - StudyMate uchun DB sxemasining "qog'ozdagi" tasviri:
 
+db_sxemasi = {
+    "users": {
+        "id": "SERIAL PRIMARY KEY",
+        "ism": "VARCHAR(100)",
+        "email": "VARCHAR(255) UNIQUE",
+        "parol_hash": "VARCHAR(255)",
+        "telegram_chat_id": "BIGINT NULL",   # bog'lanmagan bo'lsa NULL
+        "link_kodi": "VARCHAR(10) NULL",     # bog'lash jarayoni uchun vaqtinchalik
+        "yaratilgan_vaqt": "TIMESTAMP DEFAULT NOW()",
+    },
+    "fanlar": {
+        "id": "SERIAL PRIMARY KEY",
+        "nomi": "VARCHAR(100)",
+        "user_id": "INTEGER REFERENCES users(id)",
+    },
+    "topshiriqlar": {
+        "id": "SERIAL PRIMARY KEY",
+        "sarlavha": "VARCHAR(200)",
+        "matn": "TEXT",
+        "muddat_vaqti": "TIMESTAMP",
+        "bajarilgan": "BOOLEAN DEFAULT false",
+        "fan_id": "INTEGER REFERENCES fanlar(id)",
+        "user_id": "INTEGER REFERENCES users(id)",
+        "yaratilgan_vaqt": "TIMESTAMP DEFAULT NOW()",
+    },
+}
 
-def ayirish(a, b):
-    return a - b
-
-
-# ─── test_kalkulyator.py ───
-# from kalkulyator import qoshish, ayirish
-
-def test_qoshish():
-    assert qoshish(2, 3) == 5
-
-
-def test_qoshish_manfiy_sonlar():
-    assert qoshish(-2, -3) == -5
-
-
-def test_qoshish_nol_bilan():
-    assert qoshish(5, 0) == 5
-
-
-def test_ayirish():
-    assert ayirish(10, 4) == 6
-
+print(db_sxemasi)
 
 # ─────────────────────────────────────────────────────────────────────
-# Ataylab xato — 'test_' prefiksisiz funksiya (izohda, pytet topmaydi)
+# Repo tuzilmasi (izohda - papka/fayl tuzilmasi, kod emas)
 # ─────────────────────────────────────────────────────────────────────
 
-# def qoshishni_tekshir():  # ❌ 'test_' bilan boshlanmagani uchun pytest
-#     assert qoshish(2, 2) == 5  # bu qatorni HECH QACHON ishga tushirmaydi!
+# studymate/
+#   django_backend/
+#   frontend/
+#   telegram_bot/
+#   README.md
+#   .gitignore
 
+# ─────────────────────────────────────────────────────────────────────
+# ENG MUHIM QAROR (izohda)
+# ─────────────────────────────────────────────────────────────────────
 
-# Terminal:
-#   pip install pytest
-#   pytest                              # barcha testlar
-#   pytest test_kalkulyator.py          # bitta fayl
-#   pytest test_kalkulyator.py::test_qoshish  # bitta test
+# telegram_bot/ VA django_backend/ BIR XIL DATABASE_URL'ga ulanadi -
+# botning o'zining alohida bazasi BO'LMAYDI!
+
