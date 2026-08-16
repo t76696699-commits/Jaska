@@ -1,87 +1,61 @@
 # ════════════════════════════════════════════════════════════════════
-# 5-BOSQICH: Telegram bot - hisobni bog'lash va buyruqlar
+# 6-BOSQICH: Avtomatik bildirishnomalar
 # ════════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────────
-# 0) studymate/models.py - Profile modeli (telegram maydonlari uchun)
+# 1) studymate/management/commands/send_reminders.py
 # ─────────────────────────────────────────────────────────────────────
 
-# from django.db import models
-# from django.contrib.auth.models import User
-#
-# class Profile(models.Model):
-#     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
-#     telegram_chat_id = models.BigIntegerField(null=True, blank=True)
-#     link_kodi = models.CharField(max_length=10, null=True, blank=True)
+import requests
+from django.core.management.base import BaseCommand
+from django.utils import timezone
+from datetime import timedelta
+from studymate.models import Topshiriq
+
+BOT_TOKEN = "..."  # environment o'zgaruvchisidan olinadi
+
+
+class Command(BaseCommand):
+    help = "Muddati yaqinlashgan topshiriqlar uchun Telegram orqali eslatma yuboradi"
+
+    def handle(self, *args, **options):
+        hozir = timezone.now()
+        chegara = hozir + timedelta(hours=24)
+
+        topshiriqlar = Topshiriq.objects.filter(
+            bajarilgan=False,
+            muddat_vaqti__gte=hozir,
+            muddat_vaqti__lte=chegara,
+        ).exclude(
+            user__profile__telegram_chat_id__isnull=True
+        ).select_related('user__profile', 'fan')
+
+        for t in topshiriqlar:
+            self.xabar_yuborish(t)
+
+    def xabar_yuborish(self, topshiriq):
+        chat_id = topshiriq.user.profile.telegram_chat_id
+        matn = f"⏰ Eslatma: '{topshiriq.sarlavha}' ({topshiriq.fan.nomi}) muddati yaqinlashmoqda!"
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": matn},
+        )
 
 # ─────────────────────────────────────────────────────────────────────
-# 1) telegram_bot/bot.py - django.setup()
+# 2) crontab (izohda - server sozlamasi, Python emas)
 # ─────────────────────────────────────────────────────────────────────
 
-import os
-import django
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "studymate.settings")
-django.setup()
-
-from studymate.models import Fan, Topshiriq, Profile
-from django.contrib.auth.models import User
-
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-
-bot = Bot(token=os.environ["BOT_TOKEN"])
-dp = Dispatcher()
-
-
-@dp.message(Command("link"))
-async def link_handler(message: types.Message):
-    qismlar = message.text.split()
-    if len(qismlar) != 2:
-        await message.answer("Foydalanish: /link KOD")
-        return
-
-    kod = qismlar[1]
-    try:
-        user = await User.objects.aget(profile__link_kodi=kod)
-    except User.DoesNotExist:
-        await message.answer("Kod noto'g'ri yoki eskirgan")
-        return
-
-    user.profile.telegram_chat_id = message.chat.id
-    user.profile.link_kodi = None
-    await user.profile.asave()
-
-    await message.answer(f"✅ Hisobingiz bog'landi, {user.first_name}!")
-
-
-@dp.message(Command("topshiriqlar"))
-async def topshiriqlar_handler(message: types.Message):
-    try:
-        user = await User.objects.aget(profile__telegram_chat_id=message.chat.id)
-    except User.DoesNotExist:
-        await message.answer("Avval /link buyrug'i bilan hisobingizni bog'lang")
-        return
-
-    topshiriqlar = [t async for t in Topshiriq.objects.filter(
-        user=user, bajarilgan=False
-    ).select_related('fan')]
-
-    if not topshiriqlar:
-        await message.answer("Bajarilmagan topshiriqlar yo'q 🎉")
-        return
-
-    matn = "\n".join(f"📌 {t.sarlavha} ({t.fan.nomi}) — {t.muddat_vaqti:%d.%m %H:%M}" for t in topshiriqlar)
-    await message.answer(matn)
+# 0 * * * * cd /path/to/django_backend && python manage.py send_reminders
 
 # ─────────────────────────────────────────────────────────────────────
-# Ataylab xato - django.setup()dan OLDIN import (izohda)
+# 3) Ataylab xato - filtrlashni unutish (izohda)
 # ─────────────────────────────────────────────────────────────────────
 
-# from studymate.models import Fan, Topshiriq   # django.setup()DAN OLDIN!
-#
-# import os
-# import django
-# os.environ.setdefault("DJANGO_SETTINGS_MODULE", "studymate.settings")
-# django.setup()
-# ❌ django.core.exceptions.AppRegistryNotReady: Apps aren't loaded yet.
+# def handle_xato(self, *args, **options):
+#     topshiriqlar = Topshiriq.objects.filter(
+#         bajarilgan=False,
+#         muddat_vaqti__lte=timezone.now() + timedelta(hours=24),
+#     ).select_related('user__profile', 'fan')   # .exclude(...) YO'Q!
+#     for t in topshiriqlar:
+#         chat_id = t.user.profile.telegram_chat_id   # None bo'lishi mumkin!
+#         requests.post(url, json={"chat_id": chat_id, "text": "..."})
