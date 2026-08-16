@@ -1,54 +1,87 @@
 # ════════════════════════════════════════════════════════════════════
-# 1-BOSQICH: Loyihalash va repo skeleton
+# 2-BOSQICH: Django backend API - Fan va Topshiriq uchun CRUD
 # ════════════════════════════════════════════════════════════════════
 
-# Bu dars kod yozishdan ko'ra REJALASHTIRISHGA bag'ishlangan.
-# Quyida - StudyMate uchun DB sxemasining "qog'ozdagi" tasviri:
-
-db_sxemasi = {
-    "users": {
-        "id": "SERIAL PRIMARY KEY",
-        "ism": "VARCHAR(100)",
-        "email": "VARCHAR(255) UNIQUE",
-        "parol_hash": "VARCHAR(255)",
-        "telegram_chat_id": "BIGINT NULL",   # bog'lanmagan bo'lsa NULL
-        "link_kodi": "VARCHAR(10) NULL",     # bog'lash jarayoni uchun vaqtinchalik
-        "yaratilgan_vaqt": "TIMESTAMP DEFAULT NOW()",
-    },
-    "fanlar": {
-        "id": "SERIAL PRIMARY KEY",
-        "nomi": "VARCHAR(100)",
-        "user_id": "INTEGER REFERENCES users(id)",
-    },
-    "topshiriqlar": {
-        "id": "SERIAL PRIMARY KEY",
-        "sarlavha": "VARCHAR(200)",
-        "matn": "TEXT",
-        "muddat_vaqti": "TIMESTAMP",
-        "bajarilgan": "BOOLEAN DEFAULT false",
-        "fan_id": "INTEGER REFERENCES fanlar(id)",
-        "user_id": "INTEGER REFERENCES users(id)",
-        "yaratilgan_vaqt": "TIMESTAMP DEFAULT NOW()",
-    },
-}
-
-print(db_sxemasi)
-
 # ─────────────────────────────────────────────────────────────────────
-# Repo tuzilmasi (izohda - papka/fayl tuzilmasi, kod emas)
+# 1) studymate/models.py
 # ─────────────────────────────────────────────────────────────────────
 
-# studymate/
-#   django_backend/
-#   frontend/
-#   telegram_bot/
-#   README.md
-#   .gitignore
+from django.db import models
+from django.contrib.auth.models import User
+
+
+class Fan(models.Model):
+    nomi = models.CharField(max_length=100)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='fanlar')
+
+    def __str__(self):
+        return self.nomi
+
+
+class Topshiriq(models.Model):
+    sarlavha = models.CharField(max_length=200)
+    matn = models.TextField(blank=True)
+    muddat_vaqti = models.DateTimeField()
+    bajarilgan = models.BooleanField(default=False)
+    fan = models.ForeignKey(Fan, on_delete=models.CASCADE, related_name='topshiriqlar')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='topshiriqlar')
+    yaratilgan_vaqt = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.sarlavha
 
 # ─────────────────────────────────────────────────────────────────────
-# ENG MUHIM QAROR (izohda)
+# 2) studymate/views.py
 # ─────────────────────────────────────────────────────────────────────
 
-# telegram_bot/ VA django_backend/ BIR XIL DATABASE_URL'ga ulanadi -
-# botning o'zining alohida bazasi BO'LMAYDI!
+import json
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
 
+
+def topshiriq_to_dict(t):
+    return {
+        "id": t.id, "sarlavha": t.sarlavha, "matn": t.matn,
+        "muddat_vaqti": t.muddat_vaqti.isoformat(),
+        "bajarilgan": t.bajarilgan, "fan_nomi": t.fan.nomi,
+    }
+
+
+@require_http_methods(["GET", "POST"])
+@csrf_exempt
+def topshiriqlar_view(request):
+    if request.method == "GET":
+        topshiriqlar = Topshiriq.objects.filter(user=request.user).select_related('fan')
+        natija = [topshiriq_to_dict(t) for t in topshiriqlar]
+        return JsonResponse(natija, safe=False)
+
+    ma_lumot = json.loads(request.body)
+    yangi = Topshiriq.objects.create(
+        sarlavha=ma_lumot["sarlavha"], matn=ma_lumot.get("matn", ""),
+        muddat_vaqti=ma_lumot["muddat_vaqti"], fan_id=ma_lumot["fan_id"],
+        user=request.user,
+    )
+    return JsonResponse(topshiriq_to_dict(yangi), status=201)
+
+# ─────────────────────────────────────────────────────────────────────
+# 3) studymate/urls.py (izohda)
+# ─────────────────────────────────────────────────────────────────────
+
+# from django.urls import path
+# from . import views
+#
+# urlpatterns = [
+#     path('api/topshiriqlar/', views.topshiriqlar_view, name='topshiriqlar'),
+# ]
+
+# ─────────────────────────────────────────────────────────────────────
+# 4) Ataylab xato - safe=False'ni unutish (izohda)
+# ─────────────────────────────────────────────────────────────────────
+
+# def topshiriqlar_view_xato(request):
+#     topshiriqlar = Topshiriq.objects.filter(user=request.user)
+#     natija = [topshiriq_to_dict(t) for t in topshiriqlar]
+#     return JsonResponse(natija)   # safe=False YO'Q!
+# ❌ TypeError: In order to allow non-dict objects to be serialized set the
+#    safe parameter to False
