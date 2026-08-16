@@ -1,52 +1,25 @@
-# ════════════════════════════════════════════════════════════════════
-# 7-BOSQICH (CAPSTONE YAKUNI): Uchta qismni birga deploy qilish
-# ════════════════════════════════════════════════════════════════════
+1. To'g'ri papkada ekanligingizni tekshiring
+PyCharm yoki VS Code terminalini oching. Terminal aynan backend, frontend va bot papkalari joylashgan umumiy papkada ochilganiga ishonch hosil qiling.
 
-# ─────────────────────────────────────────────────────────────────────
-# 1) Xizmat turlari (izohda - deploy platformasi tushunchasi, kod emas)
-# ─────────────────────────────────────────────────────────────────────
+2. Kodlarning holatini ko'rish
+Terminalda shu buyruqni bering:
 
-# django_backend/  -> "Web Service" (HTTP so'rov kutadi, $PORT'da tinglaydi)
-# frontend/         -> statik build (Vercel/Netlify, server kerak emas)
-# telegram_bot/     -> "Background Worker" (doimiy ishlab turadi, polling)
+Bash
+git status
+Bu ekranda qizil yozuvlar bilan backend/, frontend/, bot/ kabi papkalarni ko'rsatishi kerak. Bu "hali GitHub'ga qo'shilmagan fayllar" degani.
 
-# ─────────────────────────────────────────────────────────────────────
-# 2) Environment o'zgaruvchilari (izohda)
-# ─────────────────────────────────────────────────────────────────────
+3. Barcha kodlarni qamrab olish (qo'shish)
+Barcha fayl va papkalarni Git'ga qo'shish uchun nuqta bilan yozilgan mana bu buyruqni bering:
 
-# django_backend/.env.example
-# DATABASE_URL=postgresql://user:parol@host:5432/dbnomi
-# BOT_TOKEN=...
-# FRONTEND_URL=https://studymate.vercel.app
+Bash
+git add .
+(Nuqta . barcha fayllarni bildiradi)
 
-# telegram_bot/.env.example
-# DATABASE_URL=postgresql://user:parol@host:5432/dbnomi
-# BOT_TOKEN=...
-# DJANGO_SETTINGS_MODULE=studymate.settings
+4. O'zgarishlarni saqlash (Commit)
 
-# frontend/.env.production
-# REACT_APP_API_URL=https://studymate-api.onrender.com
+Bash
+git commit -m "Barcha loyiha kodlari qo'shildi"
+5. GitHub'ga yuklash (Push)
 
-# ─────────────────────────────────────────────────────────────────────
-# 3) telegram_bot/bot.py - to'g'ri ishga tushirish (polling)
-# ─────────────────────────────────────────────────────────────────────
-
-import asyncio
-
-
-async def main():
-    # ... dp = Dispatcher(), handler'lar ...
-    # await dp.start_polling(bot)   # ❗ bu funksiya HECH QACHON qaytmaydi - doim ishlab turadi
-    pass
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
-# ─────────────────────────────────────────────────────────────────────
-# 4) Ataylab xato - botni "Web Service" sifatida sozlash (izohda)
-# ─────────────────────────────────────────────────────────────────────
-
-# Agar platform botdan $PORT'da HTTP javob kutsa, lekin bot buni
-# hech qachon bermasa:
-# ❌ Health check muvaffaqiyatsiz -> platform botni muntazam qayta ishga tushiradi
+Bash
+git push origin main
