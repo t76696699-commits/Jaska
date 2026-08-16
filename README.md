@@ -1,102 +1,87 @@
 # ════════════════════════════════════════════════════════════════════
-# 4-BOSQICH: Autentifikatsiya - token Django'da, React'da ishlatish
+# 5-BOSQICH: Telegram bot - hisobni bog'lash va buyruqlar
 # ════════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────────
-# 1) studymate/models.py - Token modeli
+# 0) studymate/models.py - Profile modeli (telegram maydonlari uchun)
 # ─────────────────────────────────────────────────────────────────────
 
-import secrets
-from django.db import models
+# from django.db import models
+# from django.contrib.auth.models import User
+#
+# class Profile(models.Model):
+#     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
+#     telegram_chat_id = models.BigIntegerField(null=True, blank=True)
+#     link_kodi = models.CharField(max_length=10, null=True, blank=True)
+
+# ─────────────────────────────────────────────────────────────────────
+# 1) telegram_bot/bot.py - django.setup()
+# ─────────────────────────────────────────────────────────────────────
+
+import os
+import django
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "studymate.settings")
+django.setup()
+
+from studymate.models import Fan, Topshiriq, Profile
 from django.contrib.auth.models import User
 
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 
-class Token(models.Model):
-    key = models.CharField(max_length=40, unique=True)
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-
-    @staticmethod
-    def yaratish(user):
-        key = secrets.token_hex(20)
-        return Token.objects.create(key=key, user=user)
-
-# ─────────────────────────────────────────────────────────────────────
-# 2) studymate/views.py - login
-# ─────────────────────────────────────────────────────────────────────
-
-import json
-from django.contrib.auth import authenticate
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+bot = Bot(token=os.environ["BOT_TOKEN"])
+dp = Dispatcher()
 
 
-@csrf_exempt
-def login_view(request):
-    ma_lumot = json.loads(request.body)
-    user = authenticate(username=ma_lumot["email"], password=ma_lumot["parol"])
-    if user is None:
-        return JsonResponse({"xato": "Email yoki parol noto'g'ri"}, status=401)
+@dp.message(Command("link"))
+async def link_handler(message: types.Message):
+    qismlar = message.text.split()
+    if len(qismlar) != 2:
+        await message.answer("Foydalanish: /link KOD")
+        return
 
-    token, _ = Token.objects.get_or_create(user=user, defaults={"key": secrets.token_hex(20)})
-    return JsonResponse({"token": token.key, "ism": user.first_name})
+    kod = qismlar[1]
+    try:
+        user = await User.objects.aget(profile__link_kodi=kod)
+    except User.DoesNotExist:
+        await message.answer("Kod noto'g'ri yoki eskirgan")
+        return
 
-# ─────────────────────────────────────────────────────────────────────
-# 3) studymate/auth_utils.py - himoyalangan view dekoratori
-# ─────────────────────────────────────────────────────────────────────
+    user.profile.telegram_chat_id = message.chat.id
+    user.profile.link_kodi = None
+    await user.profile.asave()
 
-from functools import wraps
+    await message.answer(f"✅ Hisobingiz bog'landi, {user.first_name}!")
 
 
-def token_talab_qilish(view_func):
-    @wraps(view_func)
-    def wrapper(request, *args, **kwargs):
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Token "):
-            return JsonResponse({"xato": "Token yo'q"}, status=401)
+@dp.message(Command("topshiriqlar"))
+async def topshiriqlar_handler(message: types.Message):
+    try:
+        user = await User.objects.aget(profile__telegram_chat_id=message.chat.id)
+    except User.DoesNotExist:
+        await message.answer("Avval /link buyrug'i bilan hisobingizni bog'lang")
+        return
 
-        key = auth_header.split(" ")[1]
-        try:
-            token = Token.objects.get(key=key)
-        except Token.DoesNotExist:
-            return JsonResponse({"xato": "Token yaroqsiz"}, status=401)
+    topshiriqlar = [t async for t in Topshiriq.objects.filter(
+        user=user, bajarilgan=False
+    ).select_related('fan')]
 
-        request.user = token.user
-        return view_func(request, *args, **kwargs)
-    return wrapper
+    if not topshiriqlar:
+        await message.answer("Bajarilmagan topshiriqlar yo'q 🎉")
+        return
+
+    matn = "\n".join(f"📌 {t.sarlavha} ({t.fan.nomi}) — {t.muddat_vaqti:%d.%m %H:%M}" for t in topshiriqlar)
+    await message.answer(matn)
 
 # ─────────────────────────────────────────────────────────────────────
-# 4) frontend/src/api/auth.js (izohda - JS)
+# Ataylab xato - django.setup()dan OLDIN import (izohda)
 # ─────────────────────────────────────────────────────────────────────
 
-# export async function kirish(email, parol) {
-#   const javob = await fetch(`${API_URL}/api/login/`, {
-#     method: 'POST',
-#     headers: { 'Content-Type': 'application/json' },
-#     body: JSON.stringify({ email, parol }),
-#   });
-#   const data = await javob.json();
-#   localStorage.setItem('token', data.token);
-#   return data;
-# }
+# from studymate.models import Fan, Topshiriq   # django.setup()DAN OLDIN!
 #
-# export async function topshiriqlarniOlish() {
-#   const token = localStorage.getItem('token');
-#   const javob = await fetch(`${API_URL}/api/topshiriqlar/`, {
-#     headers: { Authorization: `Token ${token}` },
-#   });
-#   return await javob.json();
-# }
-
-# ─────────────────────────────────────────────────────────────────────
-# 5) Ataylab xato - Token.DoesNotExist'ni ushlamaslik (izohda)
-# ─────────────────────────────────────────────────────────────────────
-
-# def token_talab_qilish_xato(view_func):
-#     def wrapper(request, *args, **kwargs):
-#         auth_header = request.headers.get("Authorization", "")
-#         key = auth_header.split(" ")[1]
-#         token = Token.objects.get(key=key)   # try/except YO'Q!
-#         request.user = token.user
-#         return view_func(request, *args, **kwargs)
-#     return wrapper
-# ❌ Noto'g'ri token -> Token.DoesNotExist -> 500 Internal Server Error
+# import os
+# import django
+# os.environ.setdefault("DJANGO_SETTINGS_MODULE", "studymate.settings")
+# django.setup()
+# ❌ django.core.exceptions.AppRegistryNotReady: Apps aren't loaded yet.
