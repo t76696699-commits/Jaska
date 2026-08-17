@@ -1,47 +1,49 @@
 # ════════════════════════════════════════════════════════════════════
-# 1-BOSQICH: Loyihalash va repo skeleton
+# 2-BOSQICH: Flask API + TDD asoslari
 # ════════════════════════════════════════════════════════════════════
 
-# Bu dars kod yozishdan ko'ra REJALASHTIRISHGA bag'ishlangan.
-# Quyida - RankVault uchun DB sxemasi va test skeleti:
-
 # ─────────────────────────────────────────────────────────────────────
-# schema.sql (hali haqiqiy migratsiya emas - 3-darsda bo'ladi)
+# 1) tests/test_scores.py - RED, keyin triangulation uchun 2-test
 # ─────────────────────────────────────────────────────────────────────
 
-# CREATE TABLE users (
-#   id SERIAL PRIMARY KEY,
-#   username VARCHAR(50) UNIQUE NOT NULL,
-#   created_at TIMESTAMP DEFAULT NOW()
-# );
+def test_post_score_returns_created_score(client):
+    response = client.post('/scores', json={'user_id': 1, 'points': 100})
+    assert response.status_code == 201
+    assert response.get_json()['points'] == 100
+
+
+def test_post_score_with_different_values(client):
+    response = client.post('/scores', json={'user_id': 2, 'points': 250})
+    assert response.status_code == 201
+    assert response.get_json()['points'] == 250
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2) app/routes.py - GREEN: haqiqiy, umumiy kod
+# ─────────────────────────────────────────────────────────────────────
+
+from flask import request, jsonify
+from app import app, db
+from app.models import Score
+
+
+@app.route('/scores', methods=['POST'])
+def create_score():
+    data = request.get_json()
+    score = Score(user_id=data['user_id'], points=data['points'])
+    db.session.add(score)
+    db.session.commit()
+    return jsonify({'id': score.id, 'points': score.points}), 201
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 3) Ataylab xato - "firib berish" (izohda)
+# ─────────────────────────────────────────────────────────────────────
+
+# @app.route('/scores', methods=['POST'])
+# def create_score():
+#     return jsonify({'id': 1, 'points': 100}), 201   # qattiq yozilgan!
+#     # request.get_json() umuman o'qilmaydi, DB'ga hech narsa yozilmaydi.
 #
-# CREATE TABLE scores (
-#   id SERIAL PRIMARY KEY,
-#   user_id INTEGER REFERENCES users(id),
-#   points INTEGER NOT NULL,
-#   submitted_at TIMESTAMP DEFAULT NOW()
-# );
-
-# ─────────────────────────────────────────────────────────────────────
-# tests/conftest.py - skelet, 3-darsda to'ldiriladi
-# ─────────────────────────────────────────────────────────────────────
-
-import pytest
-
-
-@pytest.fixture
-def client():
-    # 3-darsda: ALOHIDA test bazasiga ulanadigan konfiguratsiya
-    # shu yerga qo'shiladi (TEST_DATABASE_URL orqali).
-    raise NotImplementedError("3-darsda to'ldiriladi")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Ataylab qiyin - production bazasiga ulanadigan fixture (izohda)
-# ─────────────────────────────────────────────────────────────────────
-
-# @pytest.fixture
-# def client():
-#     app.config['DATABASE_URL'] = os.environ['DATABASE_URL']  # PRODUCTION!
-#     return app.test_client()
-# Hozircha zararsiz ko'rinadi, lekin testlar ko'paygach flaky bo'ladi.
+# Yagona test bilan bu "yashil" o'tadi - lekin ikkinchi, boshqa
+# qiymatlar bilan test qo'shilsa, albatta muvaffaqiyatsiz bo'ladi.
