@@ -1,66 +1,60 @@
 # ════════════════════════════════════════════════════════════════════
-# 3-BOSQICH: PostgreSQL CRUD + Fixture'lar
+# 5-BOSQICH: Test Coverage + Binary Search
 # ════════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────────
-# 1) tests/conftest.py - alohida test bazasi + avtomatik tozalash
+# 1) app/ranking.py - to'g'ri binary search (<=  bilan)
 # ─────────────────────────────────────────────────────────────────────
 
-import os
-import pytest
-from app import create_app, db as _db
-from app.models import Score, User
-
-
-@pytest.fixture
-def app():
-    app = create_app(database_url=os.environ['TEST_DATABASE_URL'])
-    with app.app_context():
-        _db.create_all()
-        yield app
-        _db.drop_all()
-
-
-@pytest.fixture
-def client(app):
-    return app.test_client()
-
-
-@pytest.fixture(autouse=True)
-def clean_tables(app):
-    yield
-    with app.app_context():
-        _db.session.query(Score).delete()
-        _db.session.query(User).delete()
-        _db.session.commit()
+def find_rank_by_points(sorted_points_desc, target_points):
+    low, high = 0, len(sorted_points_desc) - 1
+    while low <= high:
+        mid = (low + high) // 2
+        if sorted_points_desc[mid] == target_points:
+            while mid > 0 and sorted_points_desc[mid - 1] == target_points:
+                mid -= 1
+            return mid + 1
+        elif sorted_points_desc[mid] > target_points:
+            low = mid + 1
+        else:
+            high = mid - 1
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 2) tests/test_scores.py - GET /scores, toza holatga tayanib
+# 2) tests/test_ranking.py - chekka holatlarni ANIQ sinovdan o'tkazish
 # ─────────────────────────────────────────────────────────────────────
 
-def test_get_scores_empty_list(client):
-    response = client.get('/scores')
-    assert response.status_code == 200
-    assert response.get_json() == []
+def test_find_rank_empty_list():
+    assert find_rank_by_points([], 100) is None
 
 
-def test_get_scores_after_post(client):
-    client.post('/scores', json={'user_id': 1, 'points': 100})
-    response = client.get('/scores')
-    assert len(response.get_json()) == 1
+def test_find_rank_single_element_found():
+    assert find_rank_by_points([100], 100) == 1
+
+
+def test_find_rank_single_element_not_found():
+    assert find_rank_by_points([100], 50) is None
+
+
+def test_find_rank_target_not_in_list():
+    assert find_rank_by_points([300, 200, 100], 250) is None
+
+
+def test_find_rank_middle_of_large_list():
+    scores = [500, 400, 300, 200, 100]
+    assert find_rank_by_points(scores, 300) == 3
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 3) Ataylab xato - tozalashsiz conftest.py (izohda)
+# 3) Ataylab xato - off-by-one, faqat happy path sinalgan (izohda)
 # ─────────────────────────────────────────────────────────────────────
 
-# @pytest.fixture
-# def app():
-#     app = create_app(database_url=os.environ['TEST_DATABASE_URL'])
-#     with app.app_context():
-#         _db.create_all()
-#         yield app
-#         _db.drop_all()   # faqat BUTUN sessiya oxirida!
-# # clean_tables fixture'i UMUMAN YO'Q - testlar orasida ma'lumot qoladi,
-# # natija test ishga tushirish TARTIBIGA qarab o'zgaradi (flaky).
+# def find_rank_by_points(sorted_points_desc, target_points):
+#     low, high = 0, len(sorted_points_desc) - 1
+#     while low < high:                    # <= o'rniga < !
+#         ...
+#     return None
+#
+# Faqat katta ro'yxat bilan sinalsa - 100% coverage, lekin
+# find_rank_by_points([100], 100) NOTO'G'RI None qaytaradi.
