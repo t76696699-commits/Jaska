@@ -1,56 +1,87 @@
 # ════════════════════════════════════════════════════════════════════
-# 1-BOSQICH: Loyihalash va repo skeleton
+# 2-BOSQICH: Flask backend API - Category va Expense uchun CRUD
 # ════════════════════════════════════════════════════════════════════
 
-# Bu dars kod yozishdan ko'ra REJALASHTIRISHGA bag'ishlangan.
-
-db_sxemasi = {
-    "users": {
-        "id": "SERIAL PRIMARY KEY",
-        "ism": "VARCHAR(100)",
-        "email": "VARCHAR(255) UNIQUE",
-        "parol_hash": "VARCHAR(255)",
-        "telegram_chat_id": "BIGINT NULL",
-        "link_kodi": "VARCHAR(10) NULL",
-        "oylik_byudjet": "NUMERIC(10, 2) NULL",   # ❗ FLOAT emas!
-    },
-    "categories": {
-        "id": "SERIAL PRIMARY KEY",
-        "nomi": "VARCHAR(100)",
-        "user_id": "INTEGER REFERENCES users(id)",
-    },
-    "expenses": {
-        "id": "SERIAL PRIMARY KEY",
-        "summa": "NUMERIC(10, 2)",                 # ❗ pul miqdori - aniq tur SHART
-        "tavsif": "VARCHAR(200)",
-        "sana": "DATE",
-        "category_id": "INTEGER REFERENCES categories(id)",
-        "user_id": "INTEGER REFERENCES users(id)",
-        "yaratilgan_vaqt": "TIMESTAMP DEFAULT NOW()",
-    },
-}
-
-print(db_sxemasi)
-
 # ─────────────────────────────────────────────────────────────────────
-# Repo tuzilmasi (izohda)
+# 1) app/models.py
 # ─────────────────────────────────────────────────────────────────────
 
-# moneylog/
-#   flask_backend/
-#     app/
-#       static/       <- vanilla JS/CSS shu yerda
-#       templates/     <- index.html shu yerda
-#       models.py
-#       routes.py
-#     run.py
-#   telegram_bot/
-#     bot.py
-#   README.md
+from app import db
+
+
+class Category(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nomi = db.Column(db.String(100), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+
+class Expense(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    summa = db.Column(db.Numeric(10, 2), nullable=False)
+    tavsif = db.Column(db.String(200))
+    sana = db.Column(db.Date, nullable=False)
+    category_id = db.Column(db.Integer, db.ForeignKey('category.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    category = db.relationship('Category')
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "summa": float(self.summa),
+            "tavsif": self.tavsif,
+            "sana": self.sana.isoformat(),
+            "category_nomi": self.category.nomi,
+        }
 
 # ─────────────────────────────────────────────────────────────────────
-# Ataylab xato - FLOAT bilan pul hisoblash (izohda)
+# 2) app/routes.py - Blueprint orqali JSON API
 # ─────────────────────────────────────────────────────────────────────
 
-# print(0.1 + 0.2)          # 0.30000000000000004 - aniq emas!
-# print(0.1 + 0.2 == 0.3)   # False
+from flask import Blueprint, jsonify, request
+
+api = Blueprint('api', __name__, url_prefix='/api')
+
+
+@api.route('/expenses', methods=['GET'])
+def expenses_royxati():
+    xarajatlar = Expense.query.filter_by(user_id=1).all()
+    return jsonify([x.to_dict() for x in xarajatlar])
+
+
+@api.route('/expenses', methods=['POST'])
+def expense_yaratish():
+    ma_lumot = request.get_json()
+    yangi = Expense(
+        summa=ma_lumot["summa"], tavsif=ma_lumot.get("tavsif", ""),
+        sana=ma_lumot["sana"], category_id=ma_lumot["category_id"], user_id=1,
+    )
+    db.session.add(yangi)
+    db.session.commit()
+    return jsonify(yangi.to_dict()), 201
+
+# ─────────────────────────────────────────────────────────────────────
+# 3) app/__init__.py (izohda - Application Factory)
+# ─────────────────────────────────────────────────────────────────────
+
+# from flask import Flask
+# from flask_sqlalchemy import SQLAlchemy
+#
+# db = SQLAlchemy()
+#
+# def create_app():
+#     app = Flask(__name__)
+#     app.config['SQLALCHEMY_DATABASE_URI'] = '...'
+#     db.init_app(app)
+#     from app.routes import api
+#     app.register_blueprint(api)
+#     return app
+
+# ─────────────────────────────────────────────────────────────────────
+# 4) Ataylab xato - model obyektini to'g'ridan-to'g'ri jsonify() (izohda)
+# ─────────────────────────────────────────────────────────────────────
+
+# @api.route('/expenses/<int:id>')
+# def expense_korish_xato(id):
+#     xarajat = Expense.query.get_or_404(id)
+#     return jsonify(xarajat)   # to_dict() ISHLATILMAGAN!
+# ❌ TypeError: Object of type Expense is not JSON serializable
