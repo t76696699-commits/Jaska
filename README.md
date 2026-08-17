@@ -1,57 +1,81 @@
-// ════════════════════════════════════════════════════════════════════
-// 3-BOSQICH: Vanilla JS frontend - Flask orqali serverlanadi
-// ════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════
+# 4-BOSQICH: Autentifikatsiya - werkzeug.security va token
+# ════════════════════════════════════════════════════════════════════
 
-// ─────────────────────────────────────────────────────────────────────
-// 1) app/static/app.js - ma'lumot olish va chizish
-// ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# 1) app/routes.py - ro'yxatdan o'tish (parolni hash qilib)
+# ─────────────────────────────────────────────────────────────────────
 
-async function xarajatlarniYuklash() {
-  const javob = await fetch('/api/expenses');
-  const xarajatlar = await javob.json();
-  royxatniChizish(xarajatlar);
-}
+from werkzeug.security import generate_password_hash, check_password_hash
+import secrets
+from flask import request, jsonify
+from app import db
+from app.models import User
 
-// ─────────────────────────────────────────────────────────────────────
-// 2) TO'G'RI: let bilan sikl - har bir tugma o'z x.id'siga ishora qiladi
-// ─────────────────────────────────────────────────────────────────────
 
-function royxatniChizish(xarajatlar) {
-  const royxat = document.getElementById('xarajatlar-royxati');
-  royxat.innerHTML = '';
+@api.route('/register', methods=['POST'])
+def register():
+    ma_lumot = request.get_json()
+    parol_hash = generate_password_hash(ma_lumot["parol"])
 
-  for (let i = 0; i < xarajatlar.length; i++) {
-    const x = xarajatlar[i];
-    const li = document.createElement('li');
-    li.textContent = `${x.tavsif}: ${x.summa} so'm `;
+    yangi_user = User(
+        ism=ma_lumot["ism"], email=ma_lumot["email"], parol_hash=parol_hash,
+    )
+    db.session.add(yangi_user)
+    db.session.commit()
+    return jsonify({"xabar": "Ro'yxatdan o'tish muvaffaqiyatli"}), 201
 
-    const ochirishTugmasi = document.createElement('button');
-    ochirishTugmasi.textContent = "O'chirish";
-    ochirishTugmasi.addEventListener('click', () => {
-      xarajatniOchirish(x.id);
-    });
+# ─────────────────────────────────────────────────────────────────────
+# 2) app/routes.py - kirish (parolni tekshirib, token yaratish)
+# ─────────────────────────────────────────────────────────────────────
 
-    li.appendChild(ochirishTugmasi);
-    royxat.appendChild(li);
-  }
-}
 
-async function xarajatniOchirish(id) {
-  await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
-  xarajatlarniYuklash();
-}
+@api.route('/login', methods=['POST'])
+def login():
+    ma_lumot = request.get_json()
+    user = User.query.filter_by(email=ma_lumot["email"]).first()
 
-xarajatlarniYuklash();
+    if user is None or not check_password_hash(user.parol_hash, ma_lumot["parol"]):
+        return jsonify({"xato": "Email yoki parol noto'g'ri"}), 401
 
-// ─────────────────────────────────────────────────────────────────────
-// 3) Ataylab xato - 'var' bilan sikl (izohda)
-// ─────────────────────────────────────────────────────────────────────
+    user.token = secrets.token_hex(20)
+    db.session.commit()
+    return jsonify({"token": user.token, "ism": user.ism})
 
-// function royxatniChizishXato(xarajatlar) {
-//   for (var i = 0; i < xarajatlar.length; i++) {   // var ishlatilgan!
-//     const tugma = document.createElement('button');
-//     tugma.addEventListener('click', () => {
-//       console.log(i);   // HAR DOIM oxirgi qiymatni chiqaradi!
-//     });
-//   }
-// }
+# ─────────────────────────────────────────────────────────────────────
+# 3) app/auth_utils.py - himoyalangan endpoint dekoratori
+# ─────────────────────────────────────────────────────────────────────
+
+from functools import wraps
+
+
+def token_talab_qilish(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Token '):
+            return jsonify({"xato": "Token yo'q"}), 401
+
+        token = auth_header.split(' ')[1]
+        user = User.query.filter_by(token=token).first()
+        if user is None:
+            return jsonify({"xato": "Token yaroqsiz"}), 401
+
+        request.joriy_user = user
+        return f(*args, **kwargs)
+    return wrapper
+
+# ─────────────────────────────────────────────────────────────────────
+# 4) Ataylab xato - parolni hash qilishni unutish (izohda)
+# ─────────────────────────────────────────────────────────────────────
+
+# @api.route('/register', methods=['POST'])
+# def register_xato():
+#     ma_lumot = request.get_json()
+#     yangi_user = User(
+#         ism=ma_lumot["ism"], email=ma_lumot["email"],
+#         parol_hash=ma_lumot["parol"],   # generate_password_hash() ISHLATILMAGAN!
+#     )
+#     db.session.add(yangi_user)
+#     db.session.commit()
+# ❌ Baza oshkor bo'lsa, barcha parollar OCHIQ MATN sifatida ko'rinadi!
