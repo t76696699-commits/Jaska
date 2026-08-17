@@ -1,49 +1,66 @@
 # ════════════════════════════════════════════════════════════════════
-# 2-BOSQICH: Flask API + TDD asoslari
+# 3-BOSQICH: PostgreSQL CRUD + Fixture'lar
 # ════════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────────
-# 1) tests/test_scores.py - RED, keyin triangulation uchun 2-test
+# 1) tests/conftest.py - alohida test bazasi + avtomatik tozalash
 # ─────────────────────────────────────────────────────────────────────
 
-def test_post_score_returns_created_score(client):
-    response = client.post('/scores', json={'user_id': 1, 'points': 100})
-    assert response.status_code == 201
-    assert response.get_json()['points'] == 100
+import os
+import pytest
+from app import create_app, db as _db
+from app.models import Score, User
 
 
-def test_post_score_with_different_values(client):
-    response = client.post('/scores', json={'user_id': 2, 'points': 250})
-    assert response.status_code == 201
-    assert response.get_json()['points'] == 250
+@pytest.fixture
+def app():
+    app = create_app(database_url=os.environ['TEST_DATABASE_URL'])
+    with app.app_context():
+        _db.create_all()
+        yield app
+        _db.drop_all()
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+
+@pytest.fixture(autouse=True)
+def clean_tables(app):
+    yield
+    with app.app_context():
+        _db.session.query(Score).delete()
+        _db.session.query(User).delete()
+        _db.session.commit()
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 2) app/routes.py - GREEN: haqiqiy, umumiy kod
+# 2) tests/test_scores.py - GET /scores, toza holatga tayanib
 # ─────────────────────────────────────────────────────────────────────
 
-from flask import request, jsonify
-from app import app, db
-from app.models import Score
+def test_get_scores_empty_list(client):
+    response = client.get('/scores')
+    assert response.status_code == 200
+    assert response.get_json() == []
 
 
-@app.route('/scores', methods=['POST'])
-def create_score():
-    data = request.get_json()
-    score = Score(user_id=data['user_id'], points=data['points'])
-    db.session.add(score)
-    db.session.commit()
-    return jsonify({'id': score.id, 'points': score.points}), 201
+def test_get_scores_after_post(client):
+    client.post('/scores', json={'user_id': 1, 'points': 100})
+    response = client.get('/scores')
+    assert len(response.get_json()) == 1
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 3) Ataylab xato - "firib berish" (izohda)
+# 3) Ataylab xato - tozalashsiz conftest.py (izohda)
 # ─────────────────────────────────────────────────────────────────────
 
-# @app.route('/scores', methods=['POST'])
-# def create_score():
-#     return jsonify({'id': 1, 'points': 100}), 201   # qattiq yozilgan!
-#     # request.get_json() umuman o'qilmaydi, DB'ga hech narsa yozilmaydi.
-#
-# Yagona test bilan bu "yashil" o'tadi - lekin ikkinchi, boshqa
-# qiymatlar bilan test qo'shilsa, albatta muvaffaqiyatsiz bo'ladi.
+# @pytest.fixture
+# def app():
+#     app = create_app(database_url=os.environ['TEST_DATABASE_URL'])
+#     with app.app_context():
+#         _db.create_all()
+#         yield app
+#         _db.drop_all()   # faqat BUTUN sessiya oxirida!
+# # clean_tables fixture'i UMUMAN YO'Q - testlar orasida ma'lumot qoladi,
+# # natija test ishga tushirish TARTIBIGA qarab o'zgaradi (flaky).
