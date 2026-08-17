@@ -1,62 +1,50 @@
 # ════════════════════════════════════════════════════════════════════
-# 6-BOSQICH: Oylik hisobot va byudjet ogohlantirishi
+# 7-BOSQICH (CAPSTONE YAKUNI): Deploy va nisbiy yo'l xatosi
 # ════════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────────
-# 1) app/commands.py - Flask CLI komandasi
+# 1) app.py - statik fayllarni TO'G'RI, mutlaq yo'l bilan berish
 # ─────────────────────────────────────────────────────────────────────
 
-import click
-from flask import current_app
-from sqlalchemy import func
-from datetime import date
-import requests
-from app import db
-from app.models import User, Expense
+import os
+from flask import Flask, send_from_directory
 
-BOT_TOKEN = "..."  # environment o'zgaruvchisidan olinadi
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.join(BASE_DIR, "static")
+
+app = Flask(__name__)
 
 
-@current_app.cli.command('send-budget-alerts')
-def send_budget_alerts():
-    bugun = date.today()
-    oy_boshi = bugun.replace(day=1)
-
-    foydalanuvchilar = User.query.filter(User.telegram_chat_id.isnot(None)).all()
-
-    for user in foydalanuvchilar:
-        jami = db.session.query(func.sum(Expense.summa)).filter(
-            Expense.user_id == user.id,
-            Expense.sana >= oy_boshi,
-        ).scalar() or 0
-
-        if user.oylik_byudjet and jami > user.oylik_byudjet:
-            xabar_yuborish(user.telegram_chat_id, jami, user.oylik_byudjet)
+@app.route("/")
+def index():
+    return send_from_directory(FRONTEND_DIR, "index.html")
 
 
-def xabar_yuborish(chat_id, jami, byudjet):
-    matn = (
-        f"⚠️ Diqqat! Bu oy siz {jami} so'm sarfladingiz, "
-        f"byudjetingiz esa {byudjet} so'm edi."
-    )
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={"chat_id": chat_id, "text": matn},
-    )
+@app.route("/<path:filename>")
+def static_files(filename):
+    return send_from_directory(FRONTEND_DIR, filename)
+
 
 # ─────────────────────────────────────────────────────────────────────
-# 2) crontab (izohda - server sozlamasi, Python emas)
+# 2) Xizmat turlari va environment (izohda - deploy tushunchasi, kod emas)
 # ─────────────────────────────────────────────────────────────────────
 
-# 0 20 * * * cd /path/to/flask_backend && flask send-budget-alerts
+# moneylog-web  -> "Web Service" (Flask: API + frontend, bitta jarayon)
+# moneylog-bot  -> "Background Worker" (bot/bot.py: doim ishlab turadi)
+#
+# .env (ikkalasida HAM bir xil):
+# DATABASE_URL=postgresql://user:parol@host:5432/dbnomi
+# BOT_TOKEN=...
 
 # ─────────────────────────────────────────────────────────────────────
-# 3) Ataylab xato - agregatda user filtrisiz (izohda)
+# 3) Ataylab xato - oddiy nisbiy yo'l (izohda)
 # ─────────────────────────────────────────────────────────────────────
 
-# def send_budget_alerts_xato():
-#     foydalanuvchilar = User.query.filter(User.telegram_chat_id.isnot(None)).all()
-#     jami = db.session.query(func.sum(Expense.summa)).scalar() or 0   # filter YO'Q!
-#     for user in foydalanuvchilar:
-#         if user.oylik_byudjet and jami > user.oylik_byudjet:   # 'jami' HAMMA uchun bir xil!
-#             xabar_yuborish(user.telegram_chat_id, jami, user.oylik_byudjet)
+# FRONTEND_DIR = "static"          # ❌ joriy ishchi papkaga (cwd) nisbatan!
+#
+# @app.route("/")
+# def index():
+#     return send_from_directory(FRONTEND_DIR, "index.html")
+#
+# Lokalda ishlaydi (cwd == app.py papkasi), production'da esa gunicorn/
+# systemd boshqa working directory'dan ishga tushirilsa - 404!
