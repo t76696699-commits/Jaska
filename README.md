@@ -1,76 +1,52 @@
 # ════════════════════════════════════════════════════════════════════
-# 6-BOSQICH: HashMap cache + Mocking
+# 7-BOSQICH (CAPSTONE YAKUNI): Deploy va CI chiqish kodi xatosi
 # ════════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────────
-# 1) app/cache.py - HashMap orqali O(1) rank cache
+# 1) .github/workflows/test.yml - har push'da testlarni ishga tushirish
 # ─────────────────────────────────────────────────────────────────────
 
-class RankCache:
-    def __init__(self):
-        self._cache = {}
-
-    def get(self, username):
-        return self._cache.get(username)
-
-    def set_all(self, ranked_list):
-        self._cache = {
-            entry.username: i + 1
-            for i, entry in enumerate(ranked_list)
-        }
-
+# name: Test
+# on: [push]
+# jobs:
+#   test:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - run: pip install -r requirements.txt
+#       - run: pytest --cov=app --cov-fail-under=80
 
 # ─────────────────────────────────────────────────────────────────────
-# 2) app/notifications.py - xatoni TUTADIGAN, xavfsiz versiya
+# 2) .github/workflows/deploy.yml - FAQAT testlar o'tgandan keyin
 # ─────────────────────────────────────────────────────────────────────
 
-import requests
+# jobs:
+#   deploy:
+#     needs: test
+#     runs-on: ubuntu-latest
+#     steps:
+#       - run: ./deploy.sh
 
+# ─────────────────────────────────────────────────────────────────────
+# 3) run_tests.sh - TO'G'RI versiya
+# ─────────────────────────────────────────────────────────────────────
 
-def notify_top_10_safe(username):
-    try:
-        response = requests.post(
-            'https://notify.example.com/send',
-            json={'username': username, 'message': "Siz TOP 10'ga kirdingiz!"},
-            timeout=5,
-        )
-        response.raise_for_status()
-        return True
-    except requests.exceptions.RequestException:
-        return False   # xato tutildi - dastur ishlashda davom etadi
+#!/bin/bash
+set -o pipefail
+
+pytest --cov=app --cov-fail-under=80 | tee test_output.log
+echo "Test skripti chiqish kodi: $?"
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 3) tests/test_notifications.py - HAM muvaffaqiyat, HAM xato holati
+# 4) Ataylab xato - pipefail'siz skript (izohda)
 # ─────────────────────────────────────────────────────────────────────
 
-from unittest.mock import patch
-
-
-@patch('app.notifications.requests.post')
-def test_notify_top_10_success(mock_post):
-    mock_post.return_value.status_code = 200
-    assert notify_top_10_safe('ali') is True
-
-
-@patch('app.notifications.requests.post')
-def test_notify_top_10_service_down(mock_post):
-    mock_post.side_effect = requests.exceptions.Timeout()
-    assert notify_top_10_safe('ali') is False
-
-
-# ─────────────────────────────────────────────────────────────────────
-# 4) Ataylab xato - faqat muvaffaqiyat mock qilingan, try/except yo'q (izohda)
-# ─────────────────────────────────────────────────────────────────────
-
-# def notify_top_10(username):
-#     response = requests.post(..., timeout=5)
-#     response.raise_for_status()   # try/exceptSIZ!
-#     return True
+# #!/bin/bash
+# # set -o pipefail YO'Q!
 #
-# @patch('app.notifications.requests.post')
-# def test_notify_top_10(mock_post):
-#     mock_post.return_value.status_code = 200   # FAQAT muvaffaqiyat!
-#     assert notify_top_10('ali') is True
-# Xizmat XATOSI HECH QACHON sinalmagan - production'da xizmat
-# ishlamasa, POST /scores butunlay 500 bilan yiqiladi.
+# pytest --cov=app --cov-fail-under=80 | tee test_output.log
+# echo "Testlar bajarildi"
+# # Chiqish kodi HAR DOIM tee'nikiga teng (deyarli har doim 0) -
+# # pytest ICHIDA muvaffaqiyatsiz testlar bo'lsa ham CI buni "yashil"
+# # deb hisoblaydi va BUZILGAN kodni deploy qiladi.
