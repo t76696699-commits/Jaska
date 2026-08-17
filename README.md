@@ -1,50 +1,47 @@
 # ════════════════════════════════════════════════════════════════════
-# 7-BOSQICH (CAPSTONE YAKUNI): Deploy va nisbiy yo'l xatosi
+# 1-BOSQICH: Loyihalash va repo skeleton
 # ════════════════════════════════════════════════════════════════════
 
-# ─────────────────────────────────────────────────────────────────────
-# 1) app.py - statik fayllarni TO'G'RI, mutlaq yo'l bilan berish
-# ─────────────────────────────────────────────────────────────────────
-
-import os
-from flask import Flask, send_from_directory
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.join(BASE_DIR, "static")
-
-app = Flask(__name__)
-
-
-@app.route("/")
-def index():
-    return send_from_directory(FRONTEND_DIR, "index.html")
-
-
-@app.route("/<path:filename>")
-def static_files(filename):
-    return send_from_directory(FRONTEND_DIR, filename)
-
+# Bu dars kod yozishdan ko'ra REJALASHTIRISHGA bag'ishlangan.
+# Quyida - RankVault uchun DB sxemasi va test skeleti:
 
 # ─────────────────────────────────────────────────────────────────────
-# 2) Xizmat turlari va environment (izohda - deploy tushunchasi, kod emas)
+# schema.sql (hali haqiqiy migratsiya emas - 3-darsda bo'ladi)
 # ─────────────────────────────────────────────────────────────────────
 
-# moneylog-web  -> "Web Service" (Flask: API + frontend, bitta jarayon)
-# moneylog-bot  -> "Background Worker" (bot/bot.py: doim ishlab turadi)
+# CREATE TABLE users (
+#   id SERIAL PRIMARY KEY,
+#   username VARCHAR(50) UNIQUE NOT NULL,
+#   created_at TIMESTAMP DEFAULT NOW()
+# );
 #
-# .env (ikkalasida HAM bir xil):
-# DATABASE_URL=postgresql://user:parol@host:5432/dbnomi
-# BOT_TOKEN=...
+# CREATE TABLE scores (
+#   id SERIAL PRIMARY KEY,
+#   user_id INTEGER REFERENCES users(id),
+#   points INTEGER NOT NULL,
+#   submitted_at TIMESTAMP DEFAULT NOW()
+# );
 
 # ─────────────────────────────────────────────────────────────────────
-# 3) Ataylab xato - oddiy nisbiy yo'l (izohda)
+# tests/conftest.py - skelet, 3-darsda to'ldiriladi
 # ─────────────────────────────────────────────────────────────────────
 
-# FRONTEND_DIR = "static"          # ❌ joriy ishchi papkaga (cwd) nisbatan!
-#
-# @app.route("/")
-# def index():
-#     return send_from_directory(FRONTEND_DIR, "index.html")
-#
-# Lokalda ishlaydi (cwd == app.py papkasi), production'da esa gunicorn/
-# systemd boshqa working directory'dan ishga tushirilsa - 404!
+import pytest
+
+
+@pytest.fixture
+def client():
+    # 3-darsda: ALOHIDA test bazasiga ulanadigan konfiguratsiya
+    # shu yerga qo'shiladi (TEST_DATABASE_URL orqali).
+    raise NotImplementedError("3-darsda to'ldiriladi")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Ataylab qiyin - production bazasiga ulanadigan fixture (izohda)
+# ─────────────────────────────────────────────────────────────────────
+
+# @pytest.fixture
+# def client():
+#     app.config['DATABASE_URL'] = os.environ['DATABASE_URL']  # PRODUCTION!
+#     return app.test_client()
+# Hozircha zararsiz ko'rinadi, lekin testlar ko'paygach flaky bo'ladi.
