@@ -1,81 +1,82 @@
 # ════════════════════════════════════════════════════════════════════
-# 4-BOSQICH: Autentifikatsiya - werkzeug.security va token
+# 5-BOSQICH: Telegram bot - tezkor xarajat va hisob bog'lash
 # ════════════════════════════════════════════════════════════════════
 
-# ─────────────────────────────────────────────────────────────────────
-# 1) app/routes.py - ro'yxatdan o'tish (parolni hash qilib)
-# ─────────────────────────────────────────────────────────────────────
+import sys
+import os
+from datetime import date
 
-from werkzeug.security import generate_password_hash, check_password_hash
-import secrets
-from flask import request, jsonify
-from app import db
-from app.models import User
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'flask_backend'))
 
+from app import create_app, db
+from app.models import User, Category, Expense
 
-@api.route('/register', methods=['POST'])
-def register():
-    ma_lumot = request.get_json()
-    parol_hash = generate_password_hash(ma_lumot["parol"])
+app = create_app()
 
-    yangi_user = User(
-        ism=ma_lumot["ism"], email=ma_lumot["email"], parol_hash=parol_hash,
-    )
-    db.session.add(yangi_user)
-    db.session.commit()
-    return jsonify({"xabar": "Ro'yxatdan o'tish muvaffaqiyatli"}), 201
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 
-# ─────────────────────────────────────────────────────────────────────
-# 2) app/routes.py - kirish (parolni tekshirib, token yaratish)
-# ─────────────────────────────────────────────────────────────────────
+bot = Bot(token=os.environ["BOT_TOKEN"])
+dp = Dispatcher()
 
 
-@api.route('/login', methods=['POST'])
-def login():
-    ma_lumot = request.get_json()
-    user = User.query.filter_by(email=ma_lumot["email"]).first()
+@dp.message(Command("link"))
+async def link_handler(message: types.Message):
+    qismlar = message.text.split()
+    if len(qismlar) != 2:
+        await message.answer("Foydalanish: /link KOD")
+        return
 
-    if user is None or not check_password_hash(user.parol_hash, ma_lumot["parol"]):
-        return jsonify({"xato": "Email yoki parol noto'g'ri"}), 401
-
-    user.token = secrets.token_hex(20)
-    db.session.commit()
-    return jsonify({"token": user.token, "ism": user.ism})
-
-# ─────────────────────────────────────────────────────────────────────
-# 3) app/auth_utils.py - himoyalangan endpoint dekoratori
-# ─────────────────────────────────────────────────────────────────────
-
-from functools import wraps
-
-
-def token_talab_qilish(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        auth_header = request.headers.get('Authorization', '')
-        if not auth_header.startswith('Token '):
-            return jsonify({"xato": "Token yo'q"}), 401
-
-        token = auth_header.split(' ')[1]
-        user = User.query.filter_by(token=token).first()
+    kod = qismlar[1]
+    with app.app_context():
+        user = User.query.filter_by(link_kodi=kod).first()
         if user is None:
-            return jsonify({"xato": "Token yaroqsiz"}), 401
+            await message.answer("Kod noto'g'ri yoki eskirgan")
+            return
 
-        request.joriy_user = user
-        return f(*args, **kwargs)
-    return wrapper
+        user.telegram_chat_id = message.chat.id
+        user.link_kodi = None
+        db.session.commit()
+
+    await message.answer(f"✅ Hisobingiz bog'landi, {user.ism}!")
+
+
+@dp.message()
+async def tezkor_xarajat_handler(message: types.Message):
+    qismlar = message.text.split(maxsplit=1)
+    if len(qismlar) != 2 or not qismlar[0].isdigit():
+        await message.answer("Format: SUMMA TAVSIF (masalan: 50000 ovqat)")
+        return
+
+    summa, tavsif = qismlar
+
+    with app.app_context():
+        user = User.query.filter_by(telegram_chat_id=message.chat.id).first()
+        if user is None:
+            await message.answer("Avval /link buyrug'i bilan hisobingizni bog'lang")
+            return
+
+        category = Category.query.filter_by(user_id=user.id, nomi=tavsif).first()
+        if category is None:
+            category = Category(nomi=tavsif, user_id=user.id)
+            db.session.add(category)
+            db.session.flush()
+
+        xarajat = Expense(
+            summa=summa, tavsif=tavsif, sana=date.today(),
+            category_id=category.id, user_id=user.id,
+        )
+        db.session.add(xarajat)
+        db.session.commit()
+
+    await message.answer(f"✅ {summa} so'm '{tavsif}' uchun yozildi")
 
 # ─────────────────────────────────────────────────────────────────────
-# 4) Ataylab xato - parolni hash qilishni unutish (izohda)
+# Ataylab xato - app_context()siz so'rov yuborish (izohda)
 # ─────────────────────────────────────────────────────────────────────
 
-# @api.route('/register', methods=['POST'])
-# def register_xato():
-#     ma_lumot = request.get_json()
-#     yangi_user = User(
-#         ism=ma_lumot["ism"], email=ma_lumot["email"],
-#         parol_hash=ma_lumot["parol"],   # generate_password_hash() ISHLATILMAGAN!
-#     )
-#     db.session.add(yangi_user)
-#     db.session.commit()
-# ❌ Baza oshkor bo'lsa, barcha parollar OCHIQ MATN sifatida ko'rinadi!
+# @dp.message(Command("link"))
+# async def link_handler_xato(message: types.Message):
+#     kod = message.text.split()[1]
+#     user = User.query.filter_by(link_kodi=kod).first()   # app_context() YO'Q!
+# ❌ RuntimeError: Working outside of application context.
