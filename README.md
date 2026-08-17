@@ -1,53 +1,56 @@
-1. Django settings.py (Ma'lumotlar bazasi va CORS)
-Django va bot bitta bazaga ulanishi uchun .env faylga yoki Render'dagi Environment Variables qismiga DATABASE_URL ni qo'shishingiz kerak. settings.py faylida quyidagi o'zgarishlarni qiling:
+# ════════════════════════════════════════════════════════════════════
+# 1-BOSQICH: Loyihalash va repo skeleton
+# ════════════════════════════════════════════════════════════════════
 
-Python
-import os
-import dj_database_url
+# Bu dars kod yozishdan ko'ra REJALASHTIRISHGA bag'ishlangan.
 
-# 1. Baza uchun tayyor kod (Render'dagi Postgres URL'ni o'qiydi)
-DATABASES = {
-    'default': dj_database_url.config(
-        default=os.environ.get('DATABASE_URL')
-    )
+db_sxemasi = {
+    "users": {
+        "id": "SERIAL PRIMARY KEY",
+        "ism": "VARCHAR(100)",
+        "email": "VARCHAR(255) UNIQUE",
+        "parol_hash": "VARCHAR(255)",
+        "telegram_chat_id": "BIGINT NULL",
+        "link_kodi": "VARCHAR(10) NULL",
+        "oylik_byudjet": "NUMERIC(10, 2) NULL",   # ❗ FLOAT emas!
+    },
+    "categories": {
+        "id": "SERIAL PRIMARY KEY",
+        "nomi": "VARCHAR(100)",
+        "user_id": "INTEGER REFERENCES users(id)",
+    },
+    "expenses": {
+        "id": "SERIAL PRIMARY KEY",
+        "summa": "NUMERIC(10, 2)",                 # ❗ pul miqdori - aniq tur SHART
+        "tavsif": "VARCHAR(200)",
+        "sana": "DATE",
+        "category_id": "INTEGER REFERENCES categories(id)",
+        "user_id": "INTEGER REFERENCES users(id)",
+        "yaratilgan_vaqt": "TIMESTAMP DEFAULT NOW()",
+    },
 }
 
-# 2. Vercel'dagi React manzilingizni ruxsat etilganlar ro'yxatiga qo'shing
-CORS_ALLOWED_ORIGINS = [
-    "https://studymate-sizning-loyihangiz.vercel.app", 
-]
-2. Telegram Bot (Baza ulanishi va Background Worker)
-Botni Render'ga yuklayotganda albatta "Background Worker" turini tanlang (Web Service qilsangiz qulaydi). Bot kodingizda bazaga ulanish qismini quyidagicha yozing (Djangodagi bir xil DATABASE_URL olinadi):
+print(db_sxemasi)
 
-Python
-import os
-import psycopg2
+# ─────────────────────────────────────────────────────────────────────
+# Repo tuzilmasi (izohda)
+# ─────────────────────────────────────────────────────────────────────
 
-# Djangoga ulangan bir xil baza URL manzilini chaqiramiz
-DATABASE_URL = os.environ.get('DATABASE_URL')
+# moneylog/
+#   flask_backend/
+#     app/
+#       static/       <- vanilla JS/CSS shu yerda
+#       templates/     <- index.html shu yerda
+#       models.py
+#       routes.py
+#     run.py
+#   telegram_bot/
+#     bot.py
+#   README.md
 
-def get_db_connection():
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
-    except Exception as e:
-        print(f"Bazaga ulanishda xatolik: {e}")
-3. Tayyor README.md fayli
-Loyiha yakunida GitHub repositoriyangizga quyidagi matnni nusxalab, o'z manzillaringizni qo'yib chiqing. AI aynan shu ro'yxat bo'yicha baholaydi:
+# ─────────────────────────────────────────────────────────────────────
+# Ataylab xato - FLOAT bilan pul hisoblash (izohda)
+# ─────────────────────────────────────────────────────────────────────
 
-Markdown
-# StudyMate - Capstone Loyihasi
-
-## 🔗 Loyiha Havolalari
-- **React Frontend (Vercel):** [https://studymate-frontend.vercel.app](https://studymate-frontend.vercel.app)
-- **Django Backend (Render Web Service):** [https://studymate-backend.onrender.com](https://studymate-backend.onrender.com)
-- **Telegram Bot:** [@StudyMate_UzBot](https://t.me/StudyMate_UzBot)
-
-## ✅ Yakuniy Sinov Ro'yxati (7/7)
-- [x] Django backend haqiqiy hostingda Web Service sifatida ishlab turibdi
-- [x] React frontend haqiqiy hostingda statik build sifatida ishlab turibdi
-- [x] Telegram bot haqiqiy hostingda Background Worker sifatida ishlab turibdi (Web Service emas)
-- [x] Bot va Django backend BIR XIL production PostgreSQL bazasiga ulangan
-- [x] Ro'yxatdan o'tish, kirish, topshiriq qo'shish web saytda ishlaydi
-- [x] `/link` va `/topshiriqlar` buyruqlari haqiqiy botda ishlaydi
-- [x] README.md jonli havolalar va yakuniy sinov ro'yxati bilan yangilandi
+# print(0.1 + 0.2)          # 0.30000000000000004 - aniq emas!
+# print(0.1 + 0.2 == 0.3)   # False
