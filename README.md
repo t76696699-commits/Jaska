@@ -1,87 +1,57 @@
-# ════════════════════════════════════════════════════════════════════
-# 2-BOSQICH: Flask backend API - Category va Expense uchun CRUD
-# ════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// 3-BOSQICH: Vanilla JS frontend - Flask orqali serverlanadi
+// ════════════════════════════════════════════════════════════════════
 
-# ─────────────────────────────────────────────────────────────────────
-# 1) app/models.py
-# ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
+// 1) app/static/app.js - ma'lumot olish va chizish
+// ─────────────────────────────────────────────────────────────────────
 
-from app import db
+async function xarajatlarniYuklash() {
+  const javob = await fetch('/api/expenses');
+  const xarajatlar = await javob.json();
+  royxatniChizish(xarajatlar);
+}
 
+// ─────────────────────────────────────────────────────────────────────
+// 2) TO'G'RI: let bilan sikl - har bir tugma o'z x.id'siga ishora qiladi
+// ─────────────────────────────────────────────────────────────────────
 
-class Category(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    nomi = db.Column(db.String(100), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+function royxatniChizish(xarajatlar) {
+  const royxat = document.getElementById('xarajatlar-royxati');
+  royxat.innerHTML = '';
 
+  for (let i = 0; i < xarajatlar.length; i++) {
+    const x = xarajatlar[i];
+    const li = document.createElement('li');
+    li.textContent = `${x.tavsif}: ${x.summa} so'm `;
 
-class Expense(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    summa = db.Column(db.Numeric(10, 2), nullable=False)
-    tavsif = db.Column(db.String(200))
-    sana = db.Column(db.Date, nullable=False)
-    category_id = db.Column(db.Integer, db.ForeignKey('category.id'), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    category = db.relationship('Category')
+    const ochirishTugmasi = document.createElement('button');
+    ochirishTugmasi.textContent = "O'chirish";
+    ochirishTugmasi.addEventListener('click', () => {
+      xarajatniOchirish(x.id);
+    });
 
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "summa": float(self.summa),
-            "tavsif": self.tavsif,
-            "sana": self.sana.isoformat(),
-            "category_nomi": self.category.nomi,
-        }
+    li.appendChild(ochirishTugmasi);
+    royxat.appendChild(li);
+  }
+}
 
-# ─────────────────────────────────────────────────────────────────────
-# 2) app/routes.py - Blueprint orqali JSON API
-# ─────────────────────────────────────────────────────────────────────
+async function xarajatniOchirish(id) {
+  await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
+  xarajatlarniYuklash();
+}
 
-from flask import Blueprint, jsonify, request
+xarajatlarniYuklash();
 
-api = Blueprint('api', __name__, url_prefix='/api')
+// ─────────────────────────────────────────────────────────────────────
+// 3) Ataylab xato - 'var' bilan sikl (izohda)
+// ─────────────────────────────────────────────────────────────────────
 
-
-@api.route('/expenses', methods=['GET'])
-def expenses_royxati():
-    xarajatlar = Expense.query.filter_by(user_id=1).all()
-    return jsonify([x.to_dict() for x in xarajatlar])
-
-
-@api.route('/expenses', methods=['POST'])
-def expense_yaratish():
-    ma_lumot = request.get_json()
-    yangi = Expense(
-        summa=ma_lumot["summa"], tavsif=ma_lumot.get("tavsif", ""),
-        sana=ma_lumot["sana"], category_id=ma_lumot["category_id"], user_id=1,
-    )
-    db.session.add(yangi)
-    db.session.commit()
-    return jsonify(yangi.to_dict()), 201
-
-# ─────────────────────────────────────────────────────────────────────
-# 3) app/__init__.py (izohda - Application Factory)
-# ─────────────────────────────────────────────────────────────────────
-
-# from flask import Flask
-# from flask_sqlalchemy import SQLAlchemy
-#
-# db = SQLAlchemy()
-#
-# def create_app():
-#     app = Flask(__name__)
-#     app.config['SQLALCHEMY_DATABASE_URI'] = '...'
-#     db.init_app(app)
-#     from app.routes import api
-#     app.register_blueprint(api)
-#     return app
-
-# ─────────────────────────────────────────────────────────────────────
-# 4) Ataylab xato - model obyektini to'g'ridan-to'g'ri jsonify() (izohda)
-# ─────────────────────────────────────────────────────────────────────
-
-# @api.route('/expenses/<int:id>')
-# def expense_korish_xato(id):
-#     xarajat = Expense.query.get_or_404(id)
-#     return jsonify(xarajat)   # to_dict() ISHLATILMAGAN!
-# ❌ TypeError: Object of type Expense is not JSON serializable
+// function royxatniChizishXato(xarajatlar) {
+//   for (var i = 0; i < xarajatlar.length; i++) {   // var ishlatilgan!
+//     const tugma = document.createElement('button');
+//     tugma.addEventListener('click', () => {
+//       console.log(i);   // HAR DOIM oxirgi qiymatni chiqaradi!
+//     });
+//   }
+// }
