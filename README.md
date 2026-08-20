@@ -1,75 +1,60 @@
 // ════════════════════════════════════════════════════════════════════
-// 5-BOSQICH: React frontend + Redux Toolkit (TypeScript)
+// 6-BOSQICH: Testing (Jest + React Testing Library)
 // ════════════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────────────
-// 1) fetchJson<T> - tekshiruvsiz assertion (2-darsdagi kabi tanish naqsh)
+// 1) IssueCard.test.tsx - mock Issue turi bilan (TO'G'RI)
 // ─────────────────────────────────────────────────────────────────────
 
-export async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`So'rov xato: ${res.status}`);
-  return res.json() as Promise<T>;
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// 2) issuesSlice.ts - createAsyncThunk + shared Issue turi
-// ─────────────────────────────────────────────────────────────────────
-
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { render, screen } from '@testing-library/react';
+import IssueCard from './IssueCard';
 import { Issue } from '../../../shared/types';
 
-export const fetchIssues = createAsyncThunk('issues/fetch', async () => {
-  return fetchJson<Issue[]>('/api/issues');
+const mockIssue: Issue = {
+  id: 1,
+  title: 'Login sahifasi buzilgan',
+  description: 'Parolni tiklash tugmasi ishlamayapti',
+  status: 'open',
+  assigneeId: 7,
+  reporterId: 2,
+  createdAt: '2026-01-01T10:00:00Z',
+};
+
+test("IssueCard sarlavha va holatni ko'rsatadi", () => {
+  render(<IssueCard {...mockIssue} />);
+  expect(screen.getByText('Login sahifasi buzilgan')).toBeInTheDocument();
+  expect(screen.getByText('open')).toBeInTheDocument();
 });
 
-const issuesSlice = createSlice({
-  name: 'issues',
-  initialState: { list: [] as Issue[], status: 'idle' as 'idle' | 'loading' | 'succeeded' | 'failed' },
-  reducers: {},
-  extraReducers: (builder) => {
-    builder
-      .addCase(fetchIssues.pending, (state) => { state.status = 'loading'; })
-      .addCase(fetchIssues.fulfilled, (state, action) => {
-        state.status = 'succeeded';
-        state.list = action.payload;
-      });
-  },
+// ─────────────────────────────────────────────────────────────────────
+// 2) issuesSlice.test.ts - async thunk, fetch mock qilingan
+// ─────────────────────────────────────────────────────────────────────
+
+import { configureStore } from '@reduxjs/toolkit';
+import issuesReducer, { fetchIssues } from './issuesSlice';
+
+test('fetchIssues muvaffaqiyatli holatni yangilaydi', async () => {
+  const mockData: Issue[] = [
+    { id: 1, title: 'Test', description: '...', status: 'open',
+      assigneeId: null, reporterId: 1, createdAt: '2026-01-01T00:00:00Z' },
+  ];
+  global.fetch = jest.fn(() =>
+    Promise.resolve({ ok: true, json: () => Promise.resolve(mockData) })
+  ) as jest.Mock;
+
+  const store = configureStore({ reducer: { issues: issuesReducer } });
+  await store.dispatch(fetchIssues());
+
+  expect(store.getState().issues.list).toEqual(mockData);
 });
 
-export default issuesSlice.reducer;
-
 // ─────────────────────────────────────────────────────────────────────
-// 3) store/hooks.ts - tiplashtirilgan hook'lar
+// 3) Ataylab xato - mock "as any" bilan (izohda)
 // ─────────────────────────────────────────────────────────────────────
 
-import { useDispatch, useSelector, TypedUseSelectorHook } from 'react-redux';
-import type { RootState, AppDispatch } from './store';
-
-export const useAppDispatch: () => AppDispatch = useDispatch;
-export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
-
-// ─────────────────────────────────────────────────────────────────────
-// 4) IssueCard.tsx - Pick<Issue, ...> orqali props (izohda - JSX)
-// ─────────────────────────────────────────────────────────────────────
-
-// type IssueCardProps = Pick<Issue, 'id' | 'title' | 'status' | 'assigneeId'>;
+// const mockIssue = {
+//   id: 1, title: 'Login sahifasi buzilgan', status: 'open', assigneeId: 7,
+// } as any;   // BUTUN tur tekshiruvini o'chiradi!
 //
-// function IssueCard({ id, title, status, assigneeId }: IssueCardProps) {
-//   return (
-//     <div className="issue-card">
-//       <h4>{title}</h4>
-//       <span>{status}</span>
-//       <p>{assigneeId ? `Tayinlangan: #${assigneeId}` : 'Tayinlanmagan'}</p>
-//     </div>
-//   );
-// }
-
-// ─────────────────────────────────────────────────────────────────────
-// 5) Ataylab xato - backend maydonni o'zgartiradi, shared/types.ts eski qoladi (izohda)
-// ─────────────────────────────────────────────────────────────────────
-
-// Backend YANGI javob: { ..., "assignee": { "id": 7, "name": "Aziz" } }
-// shared/types.ts ESKI: assigneeId: number | null  (yangilanmagan!)
-// Natija: issue.assigneeId HAR DOIM undefined - lekin xato yo'q, crash yo'q,
-// faqat UI har doim "Tayinlanmagan" deb ko'rsatadi.
+// Issue interfeysi 5-bosqichdagi kabi o'zgarsa ham, bu test HAMON
+// YASHIL turaveradi - yolg'on ishonch beradi.
