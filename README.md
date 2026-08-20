@@ -1,67 +1,75 @@
 // ════════════════════════════════════════════════════════════════════
-// 4-BOSQICH: Autentifikatsiya - JWT va tiplashtirilgan payload
+// 5-BOSQICH: React frontend + Redux Toolkit (TypeScript)
 // ════════════════════════════════════════════════════════════════════
 
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
-import { Request, Response, NextFunction } from 'express';
+// ─────────────────────────────────────────────────────────────────────
+// 1) fetchJson<T> - tekshiruvsiz assertion (2-darsdagi kabi tanish naqsh)
+// ─────────────────────────────────────────────────────────────────────
 
-const JWT_SECRET = process.env.JWT_SECRET as string;
-
-interface AuthTokenPayload {
-  userId: number;
-  role: 'member' | 'admin';
+export async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`So'rov xato: ${res.status}`);
+  return res.json() as Promise<T>;
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// 1) Token chiqarish
+// 2) issuesSlice.ts - createAsyncThunk + shared Issue turi
 // ─────────────────────────────────────────────────────────────────────
 
-export function issueToken(payload: AuthTokenPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-}
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { Issue } from '../../../shared/types';
+
+export const fetchIssues = createAsyncThunk('issues/fetch', async () => {
+  return fetchJson<Issue[]>('/api/issues');
+});
+
+const issuesSlice = createSlice({
+  name: 'issues',
+  initialState: { list: [] as Issue[], status: 'idle' as 'idle' | 'loading' | 'succeeded' | 'failed' },
+  reducers: {},
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchIssues.pending, (state) => { state.status = 'loading'; })
+      .addCase(fetchIssues.fulfilled, (state, action) => {
+        state.status = 'succeeded';
+        state.list = action.payload;
+      });
+  },
+});
+
+export default issuesSlice.reducer;
 
 // ─────────────────────────────────────────────────────────────────────
-// 2) Token tekshirish - runtime narrowing bilan XAVFSIZ
+// 3) store/hooks.ts - tiplashtirilgan hook'lar
 // ─────────────────────────────────────────────────────────────────────
 
-function verifyAuthToken(token: string): AuthTokenPayload | null {
-  const decoded = jwt.verify(token, JWT_SECRET);
+import { useDispatch, useSelector, TypedUseSelectorHook } from 'react-redux';
+import type { RootState, AppDispatch } from './store';
 
-  if (typeof decoded === 'string' || !('userId' in decoded) || !('role' in decoded)) {
-    return null;
-  }
-  return decoded as AuthTokenPayload;
-}
+export const useAppDispatch: () => AppDispatch = useDispatch;
+export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
 
 // ─────────────────────────────────────────────────────────────────────
-// 3) Express Request'ni kengaytirish + middleware
+// 4) IssueCard.tsx - Pick<Issue, ...> orqali props (izohda - JSX)
 // ─────────────────────────────────────────────────────────────────────
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: AuthTokenPayload;
-    }
-  }
-}
-
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  const payload = token ? verifyAuthToken(token) : null;
-  if (!payload) return res.status(401).json({ error: "Avtorizatsiyadan o'tilmagan" });
-
-  req.user = payload;
-  next();
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// 4) Ataylab xato - tekshiruvsiz cast (izohda)
-// ─────────────────────────────────────────────────────────────────────
-
-// function verifyAuthToken(token: string): AuthTokenPayload {
-//   const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;   // tekshiruvsiz!
-//   return decoded;
+// type IssueCardProps = Pick<Issue, 'id' | 'title' | 'status' | 'assigneeId'>;
+//
+// function IssueCard({ id, title, status, assigneeId }: IssueCardProps) {
+//   return (
+//     <div className="issue-card">
+//       <h4>{title}</h4>
+//       <span>{status}</span>
+//       <p>{assigneeId ? `Tayinlangan: #${assigneeId}` : 'Tayinlanmagan'}</p>
+//     </div>
+//   );
 // }
-// Boshqa maqsaddagi (masalan parolni tiklash) string-token bilan
-// qayta ishlatilsa: payload.userId -> undefined, payload.role -> undefined
+
+// ─────────────────────────────────────────────────────────────────────
+// 5) Ataylab xato - backend maydonni o'zgartiradi, shared/types.ts eski qoladi (izohda)
+// ─────────────────────────────────────────────────────────────────────
+
+// Backend YANGI javob: { ..., "assignee": { "id": 7, "name": "Aziz" } }
+// shared/types.ts ESKI: assigneeId: number | null  (yangilanmagan!)
+// Natija: issue.assigneeId HAR DOIM undefined - lekin xato yo'q, crash yo'q,
+// faqat UI har doim "Tayinlanmagan" deb ko'rsatadi.
