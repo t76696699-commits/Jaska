@@ -1,60 +1,43 @@
 // ════════════════════════════════════════════════════════════════════
-// 6-BOSQICH: Testing (Jest + React Testing Library)
+// 7-BOSQICH (CAPSTONE YAKUNI): Deploy va path alias xatosi
 // ════════════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────────────
-// 1) IssueCard.test.tsx - mock Issue turi bilan (TO'G'RI)
+// 1) backend/tsconfig.json - path alias sozlash
 // ─────────────────────────────────────────────────────────────────────
 
-import { render, screen } from '@testing-library/react';
-import IssueCard from './IssueCard';
-import { Issue } from '../../../shared/types';
+// {
+//   "compilerOptions": {
+//     "baseUrl": ".",
+//     "paths": { "@shared/*": ["../shared/*"] }
+//   }
+// }
 
-const mockIssue: Issue = {
-  id: 1,
-  title: 'Login sahifasi buzilgan',
-  description: 'Parolni tiklash tugmasi ishlamayapti',
-  status: 'open',
-  assigneeId: 7,
-  reporterId: 2,
-  createdAt: '2026-01-01T10:00:00Z',
-};
-
-test("IssueCard sarlavha va holatni ko'rsatadi", () => {
-  render(<IssueCard {...mockIssue} />);
-  expect(screen.getByText('Login sahifasi buzilgan')).toBeInTheDocument();
-  expect(screen.getByText('open')).toBeInTheDocument();
-});
+import { Issue } from '@shared/types';
 
 // ─────────────────────────────────────────────────────────────────────
-// 2) issuesSlice.test.ts - async thunk, fetch mock qilingan
+// 2) package.json - dev va TO'G'RI build (izohda - JSON, kod emas)
 // ─────────────────────────────────────────────────────────────────────
 
-import { configureStore } from '@reduxjs/toolkit';
-import issuesReducer, { fetchIssues } from './issuesSlice';
-
-test('fetchIssues muvaffaqiyatli holatni yangilaydi', async () => {
-  const mockData: Issue[] = [
-    { id: 1, title: 'Test', description: '...', status: 'open',
-      assigneeId: null, reporterId: 1, createdAt: '2026-01-01T00:00:00Z' },
-  ];
-  global.fetch = jest.fn(() =>
-    Promise.resolve({ ok: true, json: () => Promise.resolve(mockData) })
-  ) as jest.Mock;
-
-  const store = configureStore({ reducer: { issues: issuesReducer } });
-  await store.dispatch(fetchIssues());
-
-  expect(store.getState().issues.list).toEqual(mockData);
-});
-
-// ─────────────────────────────────────────────────────────────────────
-// 3) Ataylab xato - mock "as any" bilan (izohda)
-// ─────────────────────────────────────────────────────────────────────
-
-// const mockIssue = {
-//   id: 1, title: 'Login sahifasi buzilgan', status: 'open', assigneeId: 7,
-// } as any;   // BUTUN tur tekshiruvini o'chiradi!
+// {
+//   "scripts": {
+//     "dev": "ts-node -r tsconfig-paths/register src/server.ts",
+//     "build": "tsc && tsc-alias"
+//   }
+// }
 //
-// Issue interfeysi 5-bosqichdagi kabi o'zgarsa ham, bu test HAMON
-// YASHIL turaveradi - yolg'on ishonch beradi.
+// npm install -D tsconfig-paths tsc-alias
+
+// ─────────────────────────────────────────────────────────────────────
+// 3) Ataylab xato - tsc-alias'siz build (izohda)
+// ─────────────────────────────────────────────────────────────────────
+
+// {
+//   "scripts": { "build": "tsc" }        // tsc-alias YO'Q!
+// }
+//
+// $ npm run build   -> tsc: 0 xato
+// $ cat dist/server.js
+//   const types_1 = require("@shared/types");   // o'zgartirilmagan!
+// $ node dist/server.js
+//   -> Error: Cannot find module '@shared/types'
