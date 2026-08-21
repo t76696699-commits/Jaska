@@ -1,122 +1,146 @@
 # ============================================================
-# 1) Loose obyektlar sonini kuzatish
+# 1) Interaktiv rebase'ni boshlash
 # ============================================================
-$ git count-objects -v
-count: 47
-size: 188
-in-pack: 0
-packs: 0
-size-pack: 0
-prune-packable: 0
-garbage: 0
-size-garbage: 0
-# "count: 47" — 47 ta loose obyekt, hali hech qanday pack yo'q.
+$ git log --oneline -4
+d4e5f6a yana typo
+c3b4a5d login validatsiya
+b2a3c4e typo tuzatish
+a1b2c3d login forma
 
-$ find .git/objects -type f | grep -v pack | wc -l
-47
-# Aynan shu son — har bir loose obyekt alohida fayl.
+$ git rebase -i HEAD~4
+# Tahrirlovchida ochiladi:
+pick a1b2c3d login forma
+pick b2a3c4e typo tuzatish
+pick c3b4a5d login validatsiya
+pick d4e5f6a yana typo
 
-# ============================================================
-# 2) git gc ishga tushirish va natijani solishtirish
-# ============================================================
-$ git gc
-Enumerating objects: 47, done.
-Counting objects: 100% (47/47), done.
-Delta compression using up to 8 threads
-Compressing objects: 100% (40/40), done.
-Writing objects: 100% (47/47), done.
-Total 47 (delta 12), reused 0 (delta 0), pack-reused 0
-
-$ git count-objects -v
-count: 0
-size: 0
-in-pack: 47
-packs: 1
-size-pack: 62
-prune-packable: 0
-garbage: 0
-size-garbage: 0
-# "count: 0" — endi loose obyekt yo'q, hammasi "in-pack: 47" ichida.
-# "size-pack: 62" (KB) — 188 KB'dan 62 KB'ga qisqardi (delta+zlib tufayli).
-
-$ ls .git/objects/pack/
-pack-3f8a91c2b7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2.idx
-pack-3f8a91c2b7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2.pack
+# Rebase 4 commit'ni to'xtatadi (edit, drop, squash, fixup, break, ...)
+# Yuqoridagi qatorlar TARTIBI - bu keyingi tarix tartibi.
 
 # ============================================================
-# 3) Pack ichidan bitta obyektni topish (git kabi)
+# 2) Qo'lda tahrirlash: fixup + qayta tartiblash
 # ============================================================
-$ git verify-pack -v .git/objects/pack/pack-3f8a91c2*.idx | head -8
-9a8b7c1d... blob   1240 512 12
-7b2e8d1f... commit 245  180 524
-5a3d0b3e... blob   4    32   704 1 4a1c7f0e...
-# Oxirgi qatorda "1 4a1c7f0e..." — bu obyekt DELTA sifatida saqlangan,
-# ya'ni 4a1c7f0e obyektidan farq sifatida, to'liq nusxa emas.
+pick a1b2c3d login forma
+fixup b2a3c4e typo tuzatish
+pick c3b4a5d login validatsiya
+fixup d4e5f6a yana typo
+# Faylni saqlab yopamiz. Git avtomatik ravishda:
+$ git rebase -i HEAD~4
+Successfully rebased and updated refs/heads/feature-login.
 
-$ git cat-file -p 5a3d0b3e
-# Natija hali ham to'liq, tushunarli kontent — Git delta'ni "shaffof"
-# ravishda ORQAGA yig'ib beradi, foydalanuvchi buni sezmaydi.
-
-# ============================================================
-# 4) Delta compression samarasini ko'rish (katta fayl misolida)
-# ============================================================
-$ for i in $(seq 1 20); do
-    echo "qator $i: $(date)" >> big_log.txt
-    git add big_log.txt
-    git commit -q -m "big_log.txt: $i-o'zgarish"
-  done
-$ du -sh .git/objects   # gc'dan oldin
-1.2M    .git/objects
-$ git gc
-$ du -sh .git/objects   # gc'dan keyin
-84K     .git/objects
-# 20 ta deyarli bir xil versiya endi bitta bazaviy nusxa + 19 ta kichik
-# delta sifatida saqlanadi — sezilarli farq.
+$ git log --oneline -2
+9f8e7d6 login validatsiya
+1a2b3c4 login forma
+# 4 ta commit endi 2 taga aylandi — typo'lar jimgina yutildi.
 
 # ============================================================
-# 5) Nomukammal narsa: dangling (ref'siz) obyektlar
+# 3) edit bilan o'rtadagi commit'ni tahrirlash
 # ============================================================
-$ git commit --allow-empty -m "vaqtinchalik"
-$ git reset --hard HEAD~1
-$ git fsck --unreachable
-unreachable commit a1b2c3d4e5f6...
-# Bu commit endi hech qanday branch'dan yetib bo'lmaydi, lekin hali
-# o'chirilmagan — chunki gc.pruneExpire (odatda 2 hafta) hali o'tmagan.
+$ git rebase -i HEAD~2
+pick 1a2b3c4 login forma
+edit 9f8e7d6 login validatsiya
+# saqlaymiz -> Git birinchi commit'ni qo'llaydi, ikkinchisida to'xtaydi:
+Stopped at 9f8e7d6...  login validatsiya
+You can amend the commit now, with
 
-$ git gc --prune=now
-$ git fsck --unreachable
-# (bo'sh) — endi butunlay o'chirildi. DIQQAT: bu QAYTARIB BO'LMAYDIGAN amal.
+  git commit --amend
 
-# ============================================================
-# 6) git repack — qo'lda maksimal siqish
-# ============================================================
-$ git repack -a -d --depth=250 --window=250
-Enumerating objects: 512, done.
-Counting objects: 100% (512/512), done.
-Delta compression using up to 8 threads
-Compressing objects: 100% (498/498), done.
-Writing objects: 100% (512/512), done.
-# -a: barcha obyektlarni bitta pack'ga; -d: eski pack fayllarni o'chirish;
-# --depth/--window: delta qidiruvni chuqurroq va kengroq qilish (sekinroq,
-# lekin yaxshiroq siqish) — odatda faqat release/CI serverida ishlatiladi.
-
-$ du -sh .git/objects/pack/
-38K     .git/objects/pack/
-# Odatiy git gc'ga nisbatan biroz kichikroq, lekin ancha sekinroq ishladi.
+$ echo "qo'shimcha validatsiya qatori" >> validators.py
+$ git add validators.py
+$ git commit --amend --no-edit
+$ git rebase --continue
+Successfully rebased and updated refs/heads/feature-login.
+# 9f8e7d6 endi YANGI SHA-1'ga ega — chunki kontenti o'zgardi.
 
 # ============================================================
-# 7) Bitmap index bilan pack yaratish
+# 4) --autosquash bilan avtomatlashtirish
 # ============================================================
-$ git repack -a -d -b
-$ ls .git/objects/pack/
-pack-xxxx.bitmap  pack-xxxx.idx  pack-xxxx.pack
-# .bitmap fayli — har bir commit uchun "undan yetib bo'ladigan obyektlar"
-# ro'yxatini oldindan hisoblab qo'yadi, clone/fetch'ni tezlashtiradi.
+$ git commit --fixup=1a2b3c4 -m "kichik tuzatish"
+[feature-login e5f6a7b] fixup! login forma
+
+$ git log --oneline -3
+e5f6a7b fixup! login forma
+9f8e7d6 login validatsiya
+1a2b3c4 login forma
+
+$ git rebase -i --autosquash HEAD~3
+# Todo ro'yxati Git tomonidan AVTOMATIK shunday tuziladi:
+pick 1a2b3c4 login forma
+fixup e5f6a7b fixup! login forma
+pick 9f8e7d6 login validatsiya
+# Qo'lda ko'chirish shart bo'lmadi — Git "fixup!" prefiksini tanib,
+# to'g'ri joyga qo'ydi.
 
 # ============================================================
-# 8) git prune — faqat yetib bo'lmaydigan loose obyektlarni tozalash
+# 5) drop bilan commit'ni butunlay olib tashlash
 # ============================================================
-$ git prune --expire=now
-# git gc --prune=now'dan farqi: prune FAQAT tozalaydi, pack yaratmaydi;
-# odatda git gc o'z ichida avtomatik chaqiradi, alohida kamdan-kam
-# ishlatiladi (masalan disk joyi darhol kerak bo'lganda).
+$ git rebase -i HEAD~3
+pick 1a2b3c4 login forma
+drop 9f8e7d6 login validatsiya   # <- bu qatorni butunlay o'chiramiz
+pick e5f6a7b fixup! login forma
+# saqlab yopamiz -> login validatsiya commit'i BUTUNLAY yo'qoladi,
+# uning kod o'zgarishlari HAM yo'qoladi (drop != revert).
+
+# ============================================================
+# 6) Xavfsiz force-push
+# ============================================================
+$ git push --force-with-lease origin feature-login
+# Agar boshqa dasturchi orada push qilgan bo'lsa:
+To github.com:team/repo.git
+ ! [rejected]  feature-login -> feature-login (stale info)
+error: failed to push some refs
+# --force-with-lease buni oldini oladi; oddiy --force esa bosib o'tib
+# hamkasbning ishini yo'qotib qo'yardi.
+
+# ============================================================
+# 7) Rebase to'xtab qolsa — abort bilan orqaga qaytish
+# ============================================================
+$ git rebase -i HEAD~3
+# konflikt yuzaga keldi, chalkashib ketdik:
+$ git rebase --abort
+# Repo REBASE BOSHLANISHDAN OLDINGI holatga to'liq qaytadi — hech qanday
+# o'zgarish saqlanmaydi, xavfsiz "orqaga" tugmasi.
+
+# ============================================================
+# 8) rebase --onto — faqat oraliqni ko'chirish
+# ============================================================
+$ git log --oneline --all --graph
+* d4e5f6a (feature-x) feature commit 2
+* c3b4a5d feature commit 1
+* b2a3c4e (old-base) eski, kerak bo'lmagan asos
+* a1b2c3d (new-base) yangi, to'g'ri asos
+* 9f8e7d6 umumiy ajdod
+
+$ git rebase --onto new-base old-base feature-x
+Successfully rebased and updated refs/heads/feature-x.
+
+$ git log --oneline --all --graph
+* f1e2d3c (feature-x) feature commit 2
+* e0d1c2b feature commit 1
+| * b2a3c4e (old-base) eski, kerak bo'lmagan asos
+|/
+* a1b2c3d (new-base) yangi, to'g'ri asos
+* 9f8e7d6 umumiy ajdod
+# feature-x'ning IKKALA commit'i ham endi new-base ustida, old-base
+# butunlay chetlab o'tildi — uning tarixiga hech qanday ta'sir bo'lmadi.
+
+# ============================================================
+# 9) Rebase paytida konflikt — continue/skip/abort uchligi
+# ============================================================
+$ git rebase main
+Auto-merging config.py
+CONFLICT (content): Merge conflict in config.py
+error: could not apply 7c3a1e9... login validatsiya
+
+$ cat config.py
+<<<<<<< HEAD
+TIMEOUT = 30
+=======
+TIMEOUT = 60
+>>>>>>> 7c3a1e9 (login validatsiya)
+$ vim config.py && git add config.py
+$ git rebase --continue
+# YOKI, agar bu commit umuman kerak bo'lmasa:
+$ git rebase --skip
+# YOKI, agar butunlay chalkashib ketgan bo'lsangiz:
+$ git rebase --abort   # boshlanishdan oldingi holatga to'liq qaytadi
