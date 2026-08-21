@@ -1,128 +1,142 @@
 # ============================================================
-# 1) Submodule qo'shish
+# 1) .sample fayllar — nega ISHLAMAYDI
 # ============================================================
-$ git submodule add https://github.com/example/ui-kit.git vendor/ui-kit
-Cloning into '/home/user/repo/vendor/ui-kit'...
-$ cat .gitmodules
-[submodule "vendor/ui-kit"]
-	path = vendor/ui-kit
-	url = https://github.com/example/ui-kit.git
+$ ls .git/hooks/
+applypatch-msg.sample  post-update.sample  pre-commit.sample
+commit-msg.sample      pre-applypatch.sample  pre-push.sample
+...
+$ git commit -m "test"
+[main abc123] test
+# .sample kengaytmasi bo'lgani uchun Git ularni umuman ko'rmaydi.
 
+# ============================================================
+# 2) pre-commit hook — maxfiy kalitni tekshirish
+# ============================================================
+$ cat > .git/hooks/pre-commit << 'EOF'
+#!/bin/bash
+if git diff --cached | grep -qE "(SECRET_KEY|API_KEY)\s*=\s*['\"][a-zA-Z0-9]"; then
+    echo "XATO: staged o'zgarishlarda maxfiy kalit topildi!"
+    echo "  .env faylidan foydalaning, kodga yozmang."
+    exit 1
+fi
+exit 0
+EOF
+$ chmod +x .git/hooks/pre-commit
+
+$ echo 'SECRET_KEY = "abc123supersecret"' >> config.py
+$ git add config.py
+$ git commit -m "config yangilandi"
+XATO: staged o'zgarishlarda maxfiy kalit topildi!
+  .env faylidan foydalaning, kodga yozmang.
+# Commit BUTUNLAY to'xtatildi — chiqish kodi 1 bo'lgani uchun.
+
+$ git commit -m "config yangilandi" --no-verify
+[main def456] config yangilandi
+# --no-verify BARCHA mahalliy hook'larni chetlab o'tadi — bu XAVFLI,
+# lekin ba'zan qasddan (masalan WIP commit) ishlatiladi.
+
+# ============================================================
+# 3) commit-msg hook — Conventional Commits formatini majburlash
+# ============================================================
+$ cat > .git/hooks/commit-msg << 'EOF'
+#!/bin/bash
+MSG_FILE=$1
+PATTERN="^(feat|fix|refactor|docs|test|chore|perf|ci)(\(.+\))?: .+"
+if ! grep -qE "$PATTERN" "$MSG_FILE"; then
+    echo "XATO: commit xabari 'feat: ...' yoki 'fix: ...' formatida bo'lishi kerak"
+    exit 1
+fi
+EOF
+$ chmod +x .git/hooks/commit-msg
+
+$ git commit -m "narsalarni tuzatdim"
+XATO: commit xabari 'feat: ...' yoki 'fix: ...' formatida bo'lishi kerak
+$ git commit -m "fix: chegirma hisoblash xatosi tuzatildi"
+[main 7c3a1e9] fix: chegirma hisoblash xatosi tuzatildi
+
+# ============================================================
+# 4) pre-push hook — shu platformaning test.yml'iga mos avtomatik test
+# ============================================================
+$ cat > .git/hooks/pre-push << 'EOF'
+#!/bin/bash
+echo "pre-push: backend testlari ishga tushirilmoqda (test.yml kabi)..."
+cd backend && python -m pytest tests/ -q --tb=short
+if [ $? -ne 0 ]; then
+    echo "XATO: testlar muvaffaqiyatsiz, push bekor qilindi."
+    echo "(Bu xuddi GitHub Actions serverda qiladigan tekshiruv — farqi:"
+    echo " bu yerda push'dan OLDIN, mahalliy kompyuterda bajarilyapti.)"
+    exit 1
+fi
+EOF
+$ chmod +x .git/hooks/pre-push
+
+$ git push origin feature-x
+pre-push: backend testlari ishga tushirilmoqda (test.yml kabi)...
+FAILED tests/test_payment.py::test_discount_applies
+XATO: testlar muvaffaqiyatsiz, push bekor qilindi.
+error: failed to push some refs
+
+# ============================================================
+# 5) Nega hook'lar versiyalanmaydi — isbot
+# ============================================================
 $ git status --short
-A  .gitmodules
-A  vendor/ui-kit          # <- 160000 mode, gitlink, oddiy papka EMAS
-$ git ls-tree HEAD vendor/
-160000 commit 3f2e1d0c9b8a7d6e5f4a3b2c1d0e9f8a7b6c5d4e	vendor/ui-kit
-# "160000" — bu maxsus mode, submodule ekanini bildiradi.
+# (bo'sh) — .git/hooks/pre-commit HECH QACHON "git status" da ko'rinmaydi,
+# chunki u .gitignore'da emas, u .git/ ICHIDA, umuman kuzatilmaydi.
 
-$ git commit -am "vendor/ui-kit submodule qo'shildi"
+$ git ls-files | grep hooks
+# (bo'sh natija) — hook'lar repo tarixining qismi EMAS.
 
 # ============================================================
-# 2) Klonlashda submodule'ni unutish xatosi
+# 6) Versiyalanadigan yechim: repo ichidagi skript + o'rnatuvchi
 # ============================================================
-$ git clone https://github.com/team/repo.git fresh-clone
-$ ls fresh-clone/vendor/ui-kit
-# (BO'SH papka!)
-
-$ cd fresh-clone
-$ git submodule update --init --recursive
-Submodule 'vendor/ui-kit' registered for path 'vendor/ui-kit'
-Cloning into 'vendor/ui-kit'...
-$ ls vendor/ui-kit
-README.md  src/  package.json    # endi to'liq
-
-# Yaxshiroq usul — bir qadamda:
-$ git clone --recurse-submodules https://github.com/team/repo.git
+$ mkdir -p scripts/git-hooks
+$ cp .git/hooks/pre-push scripts/git-hooks/pre-push
+$ git add scripts/git-hooks/pre-push
+$ git commit -m "chore: pre-push hook skripti repo'ga qo'shildi"
+# Endi har bir dasturchi buni o'rnatishi mumkin:
+$ ln -sf ../../scripts/git-hooks/pre-push .git/hooks/pre-push
+# Yoki README'da: "git config core.hooksPath scripts/git-hooks"
+$ git config core.hooksPath scripts/git-hooks
+# Bu Git'ga hook'larni .git/hooks/ o'rniga scripts/git-hooks/ dan
+# o'qishni buyuradi — endi versiyalanadigan papka ISHLAYDI.
 
 # ============================================================
-# 3) Submodule'ni yangi commit'ga ko'chirish
+# 7) Server tomonidagi pre-receive hook (illyustrativ misol)
 # ============================================================
-$ cd vendor/ui-kit
-$ git log --oneline -1
-3f2e1d0 v2.1.0 relizi
-$ git pull origin main
-$ git log --oneline -1
-9a8b7c1 v2.2.0 relizi
-$ cd ../..
-$ git status --short
- M vendor/ui-kit           # ishorat commit o'zgardi
-$ git add vendor/ui-kit
-$ git commit -m "vendor/ui-kit ni v2.2.0 ga yangilash"
-# Asosiy repo faqat "endi 9a8b7c1'ga ishora qil" deb saqlaydi.
+# Bu skript SERVERDA (masalan GitHub Enterprise yoki o'z Git serveringizda)
+# joylashadi, mijoz kompyuterida EMAS — shuning uchun --no-verify unga
+# ta'sir qilmaydi.
+$ cat /path/to/server-repo.git/hooks/pre-receive
+#!/bin/bash
+while read oldrev newrev refname; do
+    if [[ "$refname" == "refs/heads/main" ]]; then
+        echo "XATO: main branch'ga to'g'ridan-to'g'ri push taqiqlangan."
+        echo "Iltimos, Pull Request oching."
+        exit 1
+    fi
+done
+
+$ git push origin main
+remote: XATO: main branch'ga to'g'ridan-to'g'ri push taqiqlangan.
+remote: Iltimos, Pull Request oching.
+To github.com:team/repo.git
+ ! [remote rejected] main -> main (pre-receive hook declined)
+# --no-verify bu yerda HECH QANDAY farq qilmaydi, chunki tekshiruv
+# mijoz tomonida emas, SERVER tomonida ishlayapti.
 
 # ============================================================
-# 4) Subtree qo'shish — HAQIQIY nusxa
+# 8) commit-msg hook'ni kengaytirish — uzunlik tekshiruvi qo'shish
 # ============================================================
-$ git subtree add --prefix=vendor/ui-kit-subtree \
-    https://github.com/example/ui-kit.git main --squash
-Squash commit -- not updating HEAD
-Merge commit -- not updating HEAD
-
-$ git log --oneline -1
-a1b2c3d Merge commit 'xxxx' as 'vendor/ui-kit-subtree'
-$ ls vendor/ui-kit-subtree/
-README.md  src/  package.json    # DARHOL to'liq — clone/init shart emas
-
-$ git clone https://github.com/team/repo.git fresh2
-$ ls fresh2/vendor/ui-kit-subtree/
-README.md  src/  package.json    # darhol to'liq, hech qanday qo'shimcha buyruqsiz!
-
-# ============================================================
-# 5) Subtree'ni yangilash va o'zgarishni qaytarish
-# ============================================================
-$ git subtree pull --prefix=vendor/ui-kit-subtree \
-    https://github.com/example/ui-kit.git main --squash
-
-$ vim vendor/ui-kit-subtree/src/button.js   # mahalliy tuzatish
-$ git commit -am "ui-kit tugmasini tuzatish"
-$ git subtree push --prefix=vendor/ui-kit-subtree \
-    https://github.com/example/ui-kit.git my-fix-branch
-# Endi my-fix-branch orqali original repo'ga PR ochish mumkin.
-
-# ============================================================
-# 6) Qaysi mode ekanini tekshirish (submodule vs oddiy papka)
-# ============================================================
-$ git ls-tree HEAD vendor/
-160000 commit 9a8b7c1...  vendor/ui-kit           # <- submodule (gitlink)
-040000 tree   b2c3d4e...  vendor/ui-kit-subtree   # <- subtree (oddiy tree)
-
-# ============================================================
-# 7) submodule foreach — bir nechta submodule'ni bir vaqtda yangilash
-# ============================================================
-$ cat .gitmodules
-[submodule "vendor/ui-kit"]
-	path = vendor/ui-kit
-	url = https://github.com/example/ui-kit.git
-[submodule "vendor/charts"]
-	path = vendor/charts
-	url = https://github.com/example/charts.git
-
-$ git submodule foreach 'git checkout main && git pull origin main'
-Entering 'vendor/charts'
-Already on 'main'
-Entering 'vendor/ui-kit'
-Already on 'main'
-# Ikkala submodule ham BITTA buyruq bilan yangilandi.
-
-$ git submodule foreach 'echo "$name da $(git rev-parse --short HEAD)"'
-Entering 'vendor/charts'
-vendor/charts da 7c3a1e9
-Entering 'vendor/ui-kit'
-vendor/ui-kit da 9a8b7c1
-
-# ============================================================
-# 8) Submodule'ni to'g'ri olib tashlash
-# ============================================================
-$ git submodule deinit vendor/ui-kit
-Cleared directory 'vendor/ui-kit'
-$ ls vendor/ui-kit
-# (bo'sh — fayllar o'chirildi, lekin .gitmodules'da yozuv qoladi)
-
-$ git rm vendor/ui-kit
-rm 'vendor/ui-kit'
-$ git status --short
-D  .gitmodules
-D  vendor/ui-kit
-$ git commit -m "vendor/ui-kit submodule butunlay olib tashlandi"
-# Endi .gitmodules, .git/config va .git/modules/ ichidagi barcha
-# izlar tozalandi — oddiy rm -rf bilan bu HECH QACHON to'liq bo'lmasdi.
+$ cat scripts/git-hooks/commit-msg
+#!/bin/bash
+MSG_FILE=$1
+FIRST_LINE=$(head -1 "$MSG_FILE")
+if [ ${#FIRST_LINE} -gt 72 ]; then
+    echo "XATO: birinchi qator 72 belgidan uzun (${#FIRST_LINE} belgi)"
+    exit 1
+fi
+PATTERN="^(feat|fix|refactor|docs|test|chore|perf|ci)(\(.+\))?: .+"
+if ! grep -qE "$PATTERN" "$MSG_FILE"; then
+    echo "XATO: 'feat: ...' yoki 'fix: ...' formatida yozing"
+    exit 1
+fi
