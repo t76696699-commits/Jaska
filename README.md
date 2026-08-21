@@ -1,142 +1,127 @@
 # ============================================================
-# 1) .sample fayllar — nega ISHLAMAYDI
+# 1) rerere'ni yoqish va birinchi konfliktni yechish
 # ============================================================
-$ ls .git/hooks/
-applypatch-msg.sample  post-update.sample  pre-commit.sample
-commit-msg.sample      pre-applypatch.sample  pre-push.sample
-...
-$ git commit -m "test"
-[main abc123] test
-# .sample kengaytmasi bo'lgani uchun Git ularni umuman ko'rmaydi.
+$ git config rerere.enabled true
+$ git rerere status
+# hali hech narsa yo'q
 
-# ============================================================
-# 2) pre-commit hook — maxfiy kalitni tekshirish
-# ============================================================
-$ cat > .git/hooks/pre-commit << 'EOF'
-#!/bin/bash
-if git diff --cached | grep -qE "(SECRET_KEY|API_KEY)\s*=\s*['\"][a-zA-Z0-9]"; then
-    echo "XATO: staged o'zgarishlarda maxfiy kalit topildi!"
-    echo "  .env faylidan foydalaning, kodga yozmang."
-    exit 1
-fi
-exit 0
-EOF
-$ chmod +x .git/hooks/pre-commit
+$ git merge feature-a
+Auto-merging config.py
+CONFLICT (content): Merge conflict in config.py
+Recorded preimage for 'config.py'
+# "Recorded preimage" — rerere konfliktning KO'RINISHINI eslab qolayapti.
 
-$ echo 'SECRET_KEY = "abc123supersecret"' >> config.py
+$ cat config.py
+<<<<<<< HEAD
+TIMEOUT = 30
+=======
+TIMEOUT = 60
+>>>>>>> feature-a
+$ vim config.py    # qo'lda TIMEOUT = 45 deb yechamiz
 $ git add config.py
-$ git commit -m "config yangilandi"
-XATO: staged o'zgarishlarda maxfiy kalit topildi!
-  .env faylidan foydalaning, kodga yozmang.
-# Commit BUTUNLAY to'xtatildi — chiqish kodi 1 bo'lgani uchun.
-
-$ git commit -m "config yangilandi" --no-verify
-[main def456] config yangilandi
-# --no-verify BARCHA mahalliy hook'larni chetlab o'tadi — bu XAVFLI,
-# lekin ba'zan qasddan (masalan WIP commit) ishlatiladi.
+$ git commit
+Recorded resolution for 'config.py'.
+# "Recorded resolution" — bu safar YECHIMNI ham eslab qoldi.
 
 # ============================================================
-# 3) commit-msg hook — Conventional Commits formatini majburlash
+# 2) Xuddi shu konflikt qayta chiqsa — AVTOMATIK yechiladi
 # ============================================================
-$ cat > .git/hooks/commit-msg << 'EOF'
-#!/bin/bash
-MSG_FILE=$1
-PATTERN="^(feat|fix|refactor|docs|test|chore|perf|ci)(\(.+\))?: .+"
-if ! grep -qE "$PATTERN" "$MSG_FILE"; then
-    echo "XATO: commit xabari 'feat: ...' yoki 'fix: ...' formatida bo'lishi kerak"
-    exit 1
-fi
-EOF
-$ chmod +x .git/hooks/commit-msg
-
-$ git commit -m "narsalarni tuzatdim"
-XATO: commit xabari 'feat: ...' yoki 'fix: ...' formatida bo'lishi kerak
-$ git commit -m "fix: chegirma hisoblash xatosi tuzatildi"
-[main 7c3a1e9] fix: chegirma hisoblash xatosi tuzatildi
-
-# ============================================================
-# 4) pre-push hook — shu platformaning test.yml'iga mos avtomatik test
-# ============================================================
-$ cat > .git/hooks/pre-push << 'EOF'
-#!/bin/bash
-echo "pre-push: backend testlari ishga tushirilmoqda (test.yml kabi)..."
-cd backend && python -m pytest tests/ -q --tb=short
-if [ $? -ne 0 ]; then
-    echo "XATO: testlar muvaffaqiyatsiz, push bekor qilindi."
-    echo "(Bu xuddi GitHub Actions serverda qiladigan tekshiruv — farqi:"
-    echo " bu yerda push'dan OLDIN, mahalliy kompyuterda bajarilyapti.)"
-    exit 1
-fi
-EOF
-$ chmod +x .git/hooks/pre-push
-
-$ git push origin feature-x
-pre-push: backend testlari ishga tushirilmoqda (test.yml kabi)...
-FAILED tests/test_payment.py::test_discount_applies
-XATO: testlar muvaffaqiyatsiz, push bekor qilindi.
-error: failed to push some refs
-
-# ============================================================
-# 5) Nega hook'lar versiyalanmaydi — isbot
-# ============================================================
+$ git rebase main   # feature-a ni main ustiga qayta joylashtiramiz
+Auto-merging config.py
+CONFLICT (content): Merge conflict in config.py
+Resolved 'config.py' using previous resolution.
+# rerere DARHOL avvalgi yechimni qo'lladi — qayta qo'lda tuzatish shart emas!
 $ git status --short
-# (bo'sh) — .git/hooks/pre-commit HECH QACHON "git status" da ko'rinmaydi,
-# chunki u .gitignore'da emas, u .git/ ICHIDA, umuman kuzatilmaydi.
-
-$ git ls-files | grep hooks
-# (bo'sh natija) — hook'lar repo tarixining qismi EMAS.
+# (config.py allaqachon avtomatik yechilgan holda staged)
+$ git rebase --continue
 
 # ============================================================
-# 6) Versiyalanadigan yechim: repo ichidagi skript + o'rnatuvchi
+# 3) rerere keshini ko'rish
 # ============================================================
-$ mkdir -p scripts/git-hooks
-$ cp .git/hooks/pre-push scripts/git-hooks/pre-push
-$ git add scripts/git-hooks/pre-push
-$ git commit -m "chore: pre-push hook skripti repo'ga qo'shildi"
-# Endi har bir dasturchi buni o'rnatishi mumkin:
-$ ln -sf ../../scripts/git-hooks/pre-push .git/hooks/pre-push
-# Yoki README'da: "git config core.hooksPath scripts/git-hooks"
-$ git config core.hooksPath scripts/git-hooks
-# Bu Git'ga hook'larni .git/hooks/ o'rniga scripts/git-hooks/ dan
-# o'qishni buyuradi — endi versiyalanadigan papka ISHLAYDI.
+$ ls .git/rr-cache/
+a3f291e8d7c6b5a4938271605f4e3d2c1b0a9f8/
+$ ls .git/rr-cache/a3f291e8d7c6b5a4938271605f4e3d2c1b0a9f8/
+postimage  preimage
 
 # ============================================================
-# 7) Server tomonidagi pre-receive hook (illyustrativ misol)
+# 4) .gitattributes orqali custom merge driver
 # ============================================================
-# Bu skript SERVERDA (masalan GitHub Enterprise yoki o'z Git serveringizda)
-# joylashadi, mijoz kompyuterida EMAS — shuning uchun --no-verify unga
-# ta'sir qilmaydi.
-$ cat /path/to/server-repo.git/hooks/pre-receive
-#!/bin/bash
-while read oldrev newrev refname; do
-    if [[ "$refname" == "refs/heads/main" ]]; then
-        echo "XATO: main branch'ga to'g'ridan-to'g'ri push taqiqlangan."
-        echo "Iltimos, Pull Request oching."
-        exit 1
-    fi
-done
+$ cat .gitattributes
+package-lock.json merge=ours
+*.generated.json merge=ours
 
-$ git push origin main
-remote: XATO: main branch'ga to'g'ridan-to'g'ri push taqiqlangan.
-remote: Iltimos, Pull Request oching.
-To github.com:team/repo.git
- ! [remote rejected] main -> main (pre-receive hook declined)
-# --no-verify bu yerda HECH QANDAY farq qilmaydi, chunki tekshiruv
-# mijoz tomonida emas, SERVER tomonida ishlayapti.
+$ git config merge.ours.driver true
+# "true" buyrug'i har doim 0 (muvaffaqiyat) qaytaradi -> HECH QANDAY
+# birlashtirish qilinmaydi, joriy branch versiyasi saqlanadi.
+
+$ git merge feature-b
+Auto-merging package-lock.json
+Merge made by the 'ort' strategy.
+# package-lock.json'da konflikt BO'LSA HAM, u ko'rsatilmaydi —
+# HAR DOIM bizning (HEAD) versiyamiz saqlanadi, boshqa tomon e'tiborsiz.
 
 # ============================================================
-# 8) commit-msg hook'ni kengaytirish — uzunlik tekshiruvi qo'shish
+# 5) -X ours vs merge=ours — MUHIM farq
 # ============================================================
-$ cat scripts/git-hooks/commit-msg
-#!/bin/bash
-MSG_FILE=$1
-FIRST_LINE=$(head -1 "$MSG_FILE")
-if [ ${#FIRST_LINE} -gt 72 ]; then
-    echo "XATO: birinchi qator 72 belgidan uzun (${#FIRST_LINE} belgi)"
-    exit 1
-fi
-PATTERN="^(feat|fix|refactor|docs|test|chore|perf|ci)(\(.+\))?: .+"
-if ! grep -qE "$PATTERN" "$MSG_FILE"; then
-    echo "XATO: 'feat: ...' yoki 'fix: ...' formatida yozing"
-    exit 1
-fi
+$ git merge -X ours feature-c
+# config.py'da konflikt bo'lsa — FAQAT konflikt qatorlarida bizning
+# versiyamiz tanlanadi, LEKIN feature-c'dagi BOSHQA (konfliktsiz)
+# o'zgarishlar hali ham qo'shiladi:
+$ git diff HEAD~1 --stat
+config.py       | 2 +-
+new_feature.py  | 15 +++++++++++++++    # <- bu hali ham qo'shildi!
+
+# merge=ours drayveri esa BUTUN faylni e'tiborsiz qoldiradi:
+$ git merge feature-d   # package-lock.json uchun merge=ours ishlaydi
+$ git diff HEAD~1 -- package-lock.json
+# (bo'sh — fayl UMUMAN o'zgarmadi, feature-d'dagi o'zgarishlar yo'qoldi)
+
+# ============================================================
+# 6) rerere'ni tozalash (eskirgan yechimlar to'planganda)
+# ============================================================
+$ git rerere gc
+# gc.rerereResolved (odatda 60 kun) va gc.rerereUnresolved (15 kun)
+# muddatidan o'tgan yozuvlarni tozalaydi.
+
+# ============================================================
+# 7) diff3 konflikt uslubi — umumiy ajdodni ko'rish
+# ============================================================
+$ git config merge.conflictStyle diff3
+$ git merge feature-a
+CONFLICT (content): Merge conflict in config.py
+
+$ cat config.py
+<<<<<<< HEAD
+TIMEOUT = 45
+||||||| a1b2c3d (umumiy ajdod)
+TIMEOUT = 30
+=======
+TIMEOUT = 60
+>>>>>>> feature-a
+# Endi UCHTA versiya ko'rinadi: HEAD (45), asl ajdod (30), feature-a (60).
+# Buni ko'rib, "ikkalasi ham asl 30'dan boshqacha yo'nalishda o'zgartirgan"
+# ekanini tushunish osonlashadi — oddiy ikki tomonlama diff bunday
+# kontekstni bermas edi.
+
+# ============================================================
+# 8) git mergetool — vizual yechim
+# ============================================================
+$ git config merge.tool vimdiff
+$ git mergetool
+Merging:
+config.py
+
+Normal merge conflict for 'config.py':
+  {local}: modified file
+  {base}: modified file
+  {remote}: modified file
+Hit return to start merge resolution tool (vimdiff):
+# vimdiff to'rt panelli ko'rinishda ochiladi: LOCAL | BASE | MERGED | REMOTE
+# Qo'lda kerakli qatorlarni tanlab, :wqa bilan saqlab chiqiladi.
+
+$ git status --short
+M  config.py    # mergetool orqali yechilgan, endi staged
+$ git commit --no-edit
+Recorded resolution for 'config.py'.
+# rerere BU YERDA ham ishlaydi — mergetool orqali yechilgan konflikt ham
+# keyingi safar avtomatik eslab qolinadi.
