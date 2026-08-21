@@ -1,166 +1,142 @@
-7-Polish va Deploy (CAPSTONE yakuni)
-Урок 7 из 7
-· 3 раздела
-✓ Пройден
-📝
-Matn
-Текст
-#1
-7-bosqich (CAPSTONE yakuni): deploy va "tsc muvaffaqiyatli, production buzilgan" xatosi
-Dev: ts-node + tsconfig-paths - @shared/types ISHLAYDI
+# ============================================================
+# 1) .git/ papkasini birinchi marta ko'rish
+# ============================================================
+$ git init sandbox && cd sandbox
+$ echo "salom dunyo" > hello.txt
+$ ls -la .git/
+# HEAD  config  description  hooks/  info/  objects/  refs/
+$ cat .git/HEAD
+ref: refs/heads/main
+# HEAD hali hech qanday branch fayliga ishora qilmaydi, chunki
+# refs/heads/main hali yaratilmagan — birinchi commit'gacha.
 
-npm run build: tsc
+# ============================================================
+# 2) Blob'ni qo'lda yaratish — git add'siz
+# ============================================================
+$ git hash-object -w hello.txt
+5a3d0b3e6e6b0b3f5e9c8a1d2e4f6a7b8c9d0e1f
+# -w kaliti obyektni HAQIQATDA .git/objects/ ichiga yozadi.
+# Bu SHA-1 faqat "blob 12\0salom dunyo\n" kontentidan hisoblangan —
+# fayl nomi "hello.txt" bu hisoblashda umuman ishtirok etmaydi!
 
-tsc paths xaritasini FAQAT tur tekshirish uchun ishlatadi
+$ git cat-file -t 5a3d0b3
+blob
+$ git cat-file -p 5a3d0b3
+salom dunyo
 
-dist/server.js: require('@shared/types') - O'ZGARTIRILMAGAN!
+# ============================================================
+# 3) Ikkita bir xil fayl — bitta blob (deduplikatsiya)
+# ============================================================
+$ mkdir -p a b
+$ echo "salom dunyo" > a/hello.txt
+$ echo "salom dunyo" > b/hello.txt
+$ git hash-object a/hello.txt
+5a3d0b3e6e6b0b3f5e9c8a1d2e4f6a7b8c9d0e1f
+$ git hash-object b/hello.txt
+5a3d0b3e6e6b0b3f5e9c8a1d2e4f6a7b8c9d0e1f
+# Ikkalasi AYNAN bir xil SHA-1 — Git ikkalasi uchun BITTA blob saqlaydi,
+# ikki marta emas. Kontent bir xil bo'lsa, joylashuv muhim emas.
 
-node dist/server.js
+# ============================================================
+# 4) Tree'ni qo'lda qurish
+# ============================================================
+$ git update-index --add --cacheinfo 100644 5a3d0b3e6e6b0b3f5e9c8a1d2e4f6a7b8c9d0e1f hello.txt
+$ git write-tree
+def4567890abcdef1234567890abcdef12345678
+$ git cat-file -p def4567
+100644 blob 5a3d0b3e6e6b0b3f5e9c8a1d2e4f6a7b8c9d0e1f    hello.txt
+# Tree — mode + turi + SHA-1 + nom ro'yxati. Nom AYNAN shu yerda saqlanadi,
+# blob'da emas — shuning uchun bir xil blob turli nomlar bilan turli
+# tree'larda ishlatilishi mumkin.
 
-❌ Cannot find module '@shared/types' - garchi tsc 0 xato bilan tugagan bo'lsa ham!
+# ============================================================
+# 5) Commit'ni qo'lda qurish
+# ============================================================
+$ echo "Birinchi commit" | git commit-tree def4567890abcdef1234567890abcdef12345678
+abc123def4567890abcdef1234567890abcdef12
+$ git cat-file -p abc123d
+tree def4567890abcdef1234567890abcdef12345678
+author Ism Familiya <email@example.com> 1700000000 +0500
+committer Ism Familiya <email@example.com> 1700000000 +0500
 
-Node.js/Express kursida CORS'ni va React'ni backend bilan bog'lashni allaqachon o'rgangansiz. Bu — IssueForge'ning so'nggi, yakuniy bosqichi, va bu yerda capstone davomida ko'rgan g'oyaning eng aniq ko'rinishi paydo bo'ladi: bu safar hatto tscning o'zi ham "hammasi joyida" deb hisoblaydi — compile 0 xato bilan tugaydi — lekin production baribir ishlamay qoladi.
+Birinchi commit
+# E'tibor bering: bu yerda "parent" qatori YO'Q — bu ILDIZ commit.
+# Ikkinchi commit qo'shilsa, u "parent abc123d..." qatoriga ega bo'ladi.
 
-🏆 5 daqiqada g'alaba
-BLOKA 1 — path alias: nisbiy yo'llar o'rniga qisqa, o'qilishi oson import
-// backend/tsconfig.json
-{
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@shared/*": ["../shared/*"]
-    }
-  }
-}
-// ODDIY (nisbiy) import - fayl chuqurlashgan sari o'qish qiyinlashadi:
-// import { Issue } from '../../../shared/types';
+# ============================================================
+# 6) Bitta bayt o'zgarsa — butunlay boshqa SHA-1
+# ============================================================
+$ echo "salom dunyo!" > hello.txt   # oxiriga "!" qo'shildi
+$ git hash-object hello.txt
+f19e02c4a8b7d6e5f4a3b2c1d0e9f8a7b6c5d4e3
+# Butunlay boshqa xesh — birgina belgi ham butun SHA-1'ni o'zgartiradi.
+# Shu sababli tarixni "orqaga qaytarib tuzatish" darhol sezilib qoladi:
+# o'sha commit'dan keyingi HAR BIR commit'ning SHA-1'i ham o'zgaradi.
 
-// PATH ALIAS bilan - qisqa va aniq:
-import { Issue } from '@shared/types';
-BLOKA 2 — development'da path alias'ni ishga tushirish
-# package.json
-{
-  "scripts": {
-    "dev": "ts-node -r tsconfig-paths/register src/server.ts"
-  }
-}
+# ============================================================
+# 7) refs/heads/ — branch shunchaki fayl ekanini isbotlash
+# ============================================================
+$ mkdir -p .git/refs/heads
+$ echo "abc123def4567890abcdef1234567890abcdef12" > .git/refs/heads/main
+$ cat .git/refs/heads/main
+abc123def4567890abcdef1234567890abcdef12
+$ git log --oneline
+abc123d Birinchi commit
+# Endi "main" branch mavjud — biz uni git branch orqali EMAS, oddiy
+# `echo` bilan fayl yozib yaratdik. Keyingi darsda buni chuqurroq ko'ramiz.
 
-# npm install -D tsconfig-paths
-# ts-node -r tsconfig-paths/register - RUNTIME'da @shared/* alias'ini
-# haqiqiy fayl yo'liga aylantiradi. Dev'da hammasi MUKAMMAL ishlaydi.
-BLOKA 3 — production build: alias'ni ham build vaqtida hal qilish
-# npm install -D tsc-alias
-# package.json
-{
-  "scripts": {
-    "build": "tsc && tsc-alias"
-  }
-}
+# ============================================================
+# 8) Real loyihada obyektlarni ko'rish
+# ============================================================
+$ cd /home/user/student_platform
+$ git cat-file -p HEAD
+tree 7c9e6b4a3d2f1e0c9b8a7d6e5f4a3b2c1d0e9f8a
+parent 3f2e1d0c9b8a7d6e5f4a3b2c1d0e9f8a7b6c5d4e
+author Dev <dev@example.com> 1706000000 +0500
+committer Dev <dev@example.com> 1706000000 +0500
 
-# tsc-alias - tsc chiqargan dist/*.js fayllardagi '@shared/*'
-# yozuvlarini HAQIQIY nisbiy yo'llarga QAYTA YOZADI. Shundan keyingina
-# 'node dist/server.js' production'da xatosiz ishlaydi.
-🐛 Ataylab xato — faqat "tsc" bilan build qilib, alias'ni unutish
-# package.json - tsc-alias QO'SHILMAGAN:
-{
-  "scripts": {
-    "build": "tsc"
-  }
-}
+fix: backend/app/models/course.py validatsiya xatosi
 
-# Lokalda (dev'da) hammasi ishlaydi, chunki ts-node -r tsconfig-paths/register
-# RUNTIME'da alias'ni hal qiladi. Shuning uchun bu muammo "sinovda" umuman
-# sezilmaydi!
+$ git cat-file -p 7c9e6b4 | grep app
+040000 tree 55ee1122334455667788990011223344556677  backend
+$ git cat-file -p 55ee112 | grep app
+040000 tree 99aa88bb77cc66dd55ee44ff33gg22hh11ii00jj  app
 
-$ npm run build
-# ✅ tsc: 0 xato! "Muvaffaqiyatli compile qilindi."
-#
-# LEKIN dist/server.js faylini ochib qarasangiz:
-#   const types_1 = require("@shared/types");   // ❗ O'ZGARTIRILMAGAN!
-#
-# tsc "paths" xaritasini FAQAT compile vaqtida TUR tekshirish uchun
-# ishlatadi - u chiqargan JavaScript'dagi import/require yo'llarini
-# HECH QACHON qayta yozmaydi (bu - hujjatlashtirilgan, ataylab qilingan
-# tsc xatti-harakati).
+# ============================================================
+# 9) Annotated tag obyekti — to'rtinchi obyekt turi
+# ============================================================
+$ git tag -a v1.0.0 -m "Birinchi barqaror reliz"
+$ git cat-file -t v1.0.0
+tag
+$ git cat-file -p v1.0.0
+object abc123def4567890abcdef1234567890abcdef12
+type commit
+tag v1.0.0
+tagger Ism Familiya <email@example.com> 1706000000 +0500
 
-$ node dist/server.js
-# ❌ Error: Cannot find module '@shared/types'
-#    Require stack: - /app/dist/server.js
-# Production darhol ishga tushmay qoladi - garchi tsc 0 xato bergan
-# bo'lsa ham!
-Natija: tsc tsconfig.jsondagi paths xaritasini faqat compile vaqtida turlarni to'g'ri tekshirish uchun ishlatadi — @shared/types qayerga ishora qilishini bilib, shu asosda tur xatolarini topadi. Lekin u chiqargan .js fayllarda @shared/types yozuvi o'zgarishsiz qoladi — chunki bu alias faqat TypeScript'ning o'ziga, compile vaqtida tanish, Node.js'ning require() mexanizmiga esa butunlay notanish. Node ishga tushganda, @shared/types degan haqiqiy npm paketi yoki fayl yo'q — shuning uchun Cannot find module xatosi bilan darhol yiqiladi. Bu — capstone davomida ko'rgan barcha "compile vaqtida OK, runtime'da muammo" xatolarining eng yalang'och shakli: bu safar hatto tscning o'zi ham noto'g'ri signal beradi.
+Birinchi barqaror reliz
+# E'tibor bering: tag OBYEKTI commit'ga emas, balki O'ZI alohida obyekt —
+# "object" qatori orqali commit'ga ishora qiladi. Yengil (lightweight) teg
+# esa umuman bunday obyekt yaratmaydi, faqat oddiy ref (0-darsdagi
+# refs/heads/ kabi, lekin refs/tags/ ostida).
 
-Endi tushuntiramiz
-1. Nega path alias (@shared/*) dev'da (ts-node bilan) muammosiz ishlaydi?
-ts-node -r tsconfig-paths/register — bu runtimeda ishlaydigan qo'shimcha vosita. U dastur ishga tushgan paytda, har bir @shared/* importini "ushlab", uni haqiqiy fayl yo'liga o'zi aylantiradi. Shuning uchun dev muhitida bu jarayon butunlay ko'rinmas holda, muammosiz ishlab turadi.
+$ ls .git/refs/tags/
+v1.0.0
+$ cat .git/refs/tags/v1.0.0
+9f8e7d6c5b4a3928170615f4e3d2c1b0a9f8e7d6
+# Bu — annotated tag OBYEKTINING SHA-1'i, commit'ning o'zi EMAS.
 
-2. tsc paths xaritasini nima uchun ishlatadi, va nima uchun ishlatmaydi?
-tsc pathsni faqat compile vaqtida, @shared/typesning haqiqatda qaysi fayl/interfeysga mos kelishini bilish uchun ishlatadi — bu unga to'g'ri tur tekshiruvini o'tkazish imkonini beradi. Lekin tscning vazifasi TypeScript'ni JavaScript'ga aylantirish, import yo'llarini qayta yozish emas — shuning uchun u chiqargan .js faylda original @shared/types satri o'zgarishsiz qoladi.
-
-3. Nega bu xato aynan production'da, node dist/server.js ishga tushirilganda paydo bo'ladi?
-Production'da, oddatda, ts-node ham, tsconfig-paths/register ham ishlatilmaydi — faqat oldindan compile qilingan, "sof" JavaScript (node dist/server.js) ishga tushiriladi. Node.js'ning standart require() mexanizmi tsconfig.json haqida umuman bilmaydi va @shared/typesni oddiy npm paket nomi deb qabul qiladi — bunday paket node_modulesda yo'qligi uchun xato beradi.
-
-4. Bu muammoning to'g'ri yechimi nima?
-tsc-alias kabi vositani build jarayoniga qo'shish — bu vosita tsc chiqargan .js fayllardagi @shared/* kabi alias yozuvlarini haqiqiy nisbiy yo'llarga qayta yozadi, shundan keyin node dist/server.js production'da xatosiz ishlaydi. Muqobil yechim — umuman alias ishlatmasdan, doim nisbiy yo'llardan foydalanish (kamroq qulay, lekin bu muammoni butunlay chetlab o'tadi).
-
-5. Bu xato butun capstone bo'ylab ko'rgan g'oyaning qanday yakuniy ko'rinishi?
-1-6-darslarda TypeScript'ning o'zi "aldamadi" — muammo har doim dasturchi compile vaqtidagi ma'lumotga ortiqcha ishonganda paydo bo'lardi. Bu yerda esa hatto tscning muvaffaqiyatli compile xabari ham yetarli emasligini ko'rasiz — bu capstone davomida o'rgangan eng muhim saboqni yakunlaydi: hech qanday compile vaqtidagi "OK" signali, hatto tsc'ning o'zinikidan ham, production'da hamma narsa to'g'ri ishlashini kafolatlamaydi. Faqat haqiqiy, jonli sinov (deploy qilib, ishga tushirib ko'rish) buni tasdiqlay oladi.
-
-📌 Bu darsdan keyin siz bilasizki
-✅ Path alias'lar (@shared/*) dev'da tsconfig-paths/register orqali runtime'da hal qilinadi
-✅ tsc pathsni faqat tur tekshirish uchun ishlatadi — chiqargan JS'dagi import yo'llarini qayta yozmaydi
-✅ Production'da tsc-alias kabi vosita bo'lmasa, node dist/... "Cannot find module" bilan yiqiladi
-✅ tscning "0 xato" xabari ham runtime muvaffaqiyatini kafolatlamaydi
-✅ Faqat haqiqiy deploy va jonli sinov — compile vaqtidagi har qanday "OK" signalidan ko'ra ishonchliroq tekshiruv
-🎉 Tabriklaymiz!
-Siz IssueForge'ni 1-bosqichdagi bo'sh repo'dan boshlab, umumiy TypeScript sxemasi, Express + TypeScript backend, PostgreSQL bilan tiplashtirilgan so'rovlar, JWT autentifikatsiyasi, React + Redux Toolkit frontend, testlar va nihoyat to'g'ri, ikki qismli production deploygacha qurdingiz. Bu capstone davomida siz TypeScript Asoslari, Node.js/Express Asoslari va React: Redux Toolkit, TypeScript va Testlash kurslarida alohida o'rgangan bilimlarni bitta, real loyihada birlashtirdingiz — va eng muhimi, TypeScript'ning eng katta haqiqatini yetti xil ko'rinishda ko'rdingiz: u sizga compile vaqtida yordam beradi, lekin runtime'da hech narsani sizning o'rningizga tekshirmaydi.
-
-💻
-Kod
-Код
-#2
-typescript
- Nusxalash
-// ════════════════════════════════════════════════════════════════════
-// 7-BOSQICH (CAPSTONE YAKUNI): Deploy va path alias xatosi
-// ════════════════════════════════════════════════════════════════════
-
-// ─────────────────────────────────────────────────────────────────────
-// 1) backend/tsconfig.json - path alias sozlash
-// ─────────────────────────────────────────────────────────────────────
-
-// {
-//   "compilerOptions": {
-//     "baseUrl": ".",
-//     "paths": { "@shared/*": ["../shared/*"] }
-//   }
-// }
-
-import { Issue } from '@shared/types';
-
-// ─────────────────────────────────────────────────────────────────────
-// 2) package.json - dev va TO'G'RI build (izohda - JSON, kod emas)
-// ─────────────────────────────────────────────────────────────────────
-
-// {
-//   "scripts": {
-//     "dev": "ts-node -r tsconfig-paths/register src/server.ts",
-//     "build": "tsc && tsc-alias"
-//   }
-// }
-//
-// npm install -D tsconfig-paths tsc-alias
-
-// ─────────────────────────────────────────────────────────────────────
-// 3) Ataylab xato - tsc-alias'siz build (izohda)
-// ─────────────────────────────────────────────────────────────────────
-
-// {
-//   "scripts": { "build": "tsc" }        // tsc-alias YO'Q!
-// }
-//
-// $ npm run build   -> tsc: 0 xato
-// $ cat dist/server.js
-//   const types_1 = require("@shared/types");   // o'zgartirilmagan!
-// $ node dist/server.js
-//   -> Error: Cannot find module '@shared/types'
+# ============================================================
+# 10) git fsck — butun obyektlar bazasining yaxlitligini tekshirish
+# ============================================================
+$ git fsck --full
+Checking object directories: 100% (256/256), done.
+Checking objects: 100% (52/52), done.
+# Muammo bo'lmasa hech qanday xato chiqmaydi. Agar disk buzilib, bitta
+# obyekt korruptsiyaga uchrasa:
+$ git fsck --full
+error: hash mismatch for .git/objects/9f/8e7d6c... (expected 9f8e7d6c...)
+# Bu SHA-1'ning content-addressing xususiyati tufayli mumkin bo'lgan
+# tekshiruv — agar bayt korruptsiyaga uchrasa, xesh mos kelmay qoladi,
+# demak muammo DARHOL aniqlanadi (0-darsdagi "bir bayt o'zgarsa, butun
+# SHA-1 o'zgaradi" qoidasi shu yerda amaliy foyda beradi).
