@@ -1,90 +1,120 @@
-**# ============================================================
-# Yakuniy amaliyot: to'rt mavzuni bitta jamoaviy stsenariyda
 # ============================================================
-
-# 1) Shoshilinch hotfix uchun worktree (6-dars)
-$ git worktree add ../hotfix main
-$ cd ../hotfix
-$ git switch -c hotfix/vendor-update
-
-# 2) vendor/ submodule'ini yangilash (7-dars)
-$ cd vendor/ui-kit
-$ git pull origin main
-$ cd ../..
-$ git add vendor/ui-kit
-$ git commit -m "vendor/ui-kit yangilandi"
-
-# 3) pre-commit hook maxfiy kalitni tekshiradi (8-dars)
-$ git commit -am "config.py yangilandi"
-XATO: staged o'zgarishlarda maxfiy kalit topildi!
-$ vim config.py   # kalitni .env'ga ko'chiramiz
-$ git commit -am "config.py yangilandi (kalit .env'ga ko'chirildi)"
-[hotfix/vendor-update abc123] config.py yangilandi
-
-# 4) main'ga birlashtirishda avvalgi konflikt qayta chiqadi, rerere yechadi (9-dars)
-$ git switch main
-$ git merge hotfix/vendor-update
-Auto-merging config.py
-Resolved 'config.py' using previous resolution.
-Auto-merging vendor/ui-kit
-Merge made by the 'ort' strategy.
-
-# 5) Push'dan oldin mahalliy test, keyin server tekshiruvi
-$ git push origin main
-pre-push: backend testlari (test.yml kabi)...
-3 passed
-# ... push davom etadi, GitHub serverida .github/workflows/test.yml
-# QAYTA, mustaqil ravishda ishga tushadi — bu ikkinchi, majburiy qatlam.
-
-# 6) Tozalash
-$ git worktree remove ../hotfix
+# 1) Bu platformaning haqiqiy monorepo tuzilishi
+# ============================================================
+$ ls
+alembic/  alembic.ini  backend/  docs/  frontend/  .github/
+$ du -sh */
+340M    backend/
+180M    frontend/
+2.1M    docs/
+8.4M    alembic/
 
 # ============================================================
-# O'z-o'zini tekshirish: interaktiv jadval
+# 2) Partial clone — faqat commit/tree, blob'lar keyinroq
 # ============================================================
-# | Savol                                      | Javob qayerda?     |
-# |----------------------------------------------|---------------------|
-# | worktree nima saqlaydi, nima ulashadi?       | 6-dars              |
-# | submodule vs subtree fayl saqlash farqi?     | 7-dars              |
-# | --no-verify nima uchun xavfli?               | 8-dars              |
-# | rerere ikkinchi safar nima deydi?            | 9-dars              |
+$ git clone --filter=blob:none --sparse \
+    https://github.com/team/student_platform.git thin-clone
+Cloning into 'thin-clone'...
+remote: Enumerating objects: 15234, done.
+remote: Total 15234 (delta 8821), reused 15100 (delta 8750)
+Receiving objects: 100% (15234/15234), 12.4 MiB | ...
+# Diqqat: 12.4 MiB — TO'LIQ clone bo'lsa 500+ MiB bo'lardi.
+# Commit/tree tarixi TO'LIQ, lekin fayl kontenti (blob) hali yuklanmagan.
+
+$ cd thin-clone
+$ ls
+# (bo'sh yoki minimal — sparse hali sozlanmagan)
 
 # ============================================================
-# Qo'shimcha tekshiruv: worktree + submodule + hook birgalikda
+# 3) sparse-checkout: faqat kerakli papkalarni tanlash
 # ============================================================
-$ git worktree list --porcelain | head -6
-worktree /home/user/repo
-HEAD 3f2e1d0c9b8a7d6e5f4a3b2c1d0e9f8a7b6c5d4e
-branch refs/heads/main
+$ git sparse-checkout init --cone
+$ git sparse-checkout set backend frontend
+$ ls
+backend/  frontend/
+# docs/ va alembic/ diskda YO'Q, lekin hali obyektlar bazasida mavjud.
 
-worktree /home/user/hotfix
-HEAD a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9
+$ du -sh .git
+45M .git
+# To'liq clone'dagi bir necha yuz MB'ga solishtiring.
 
-$ cd ../hotfix
-$ git submodule foreach 'git log -1 --oneline'
-Entering 'vendor/ui-kit'
-9a8b7c1 v2.2.0 relizi
+# ============================================================
+# 4) Blob'lar "lazy" ravishda yuklanishi
+# ============================================================
+$ cat backend/app/models/course.py
+remote: Enumerating objects: 3, done.
+Receiving objects: 100% (3/3), 2.1 KiB | 850 KiB/s, done.
+class Course(Base):
+    __tablename__ = "courses"
+    ...
+# Fayl birinchi marta o'qilganda Git uni serverdan "on-demand" yuklab
+# oldi — bu paytgacha faqat SHA-1 ma'lum edi, kontent yo'q edi.
 
-$ git config core.hooksPath scripts/git-hooks
-$ git commit -am "config.py yangilandi"
-# pre-commit hook ishga tushadi, tekshiradi, muammo bo'lmasa o'tkazadi
+# ============================================================
+# 5) Kerak bo'lganda docs/ ni qaytarib qo'shish
+# ============================================================
+$ git sparse-checkout add docs
+$ ls
+backend/  docs/  frontend/
+# Qayta klonlash SHART EMAS — docs/ obyektlari allaqachon .git/objects
+# ichida bor edi (chunki partial clone faqat BLOB'larni kechiktirgan
+# edi, tree'larni emas).
 
-$ cd ../repo
-$ git merge hotfix/vendor-update
-Resolved 'config.py' using previous resolution.
-$ git rerere status
-# (bo'sh — barcha konfliktlar allaqachon yechilgan)
+# ============================================================
+# 6) Cone mode qanday sozlanganini tekshirish
+# ============================================================
+$ cat .git/info/sparse-checkout
+/*
+!/*/
+/backend/
+/docs/
+/frontend/
+$ git config core.sparseCheckoutCone
+true
 
-$ git submodule foreach 'git status --short'
-Entering 'vendor/ui-kit'
-Entering 'vendor/charts'
-# (bo'sh ikkalasida ham — ikkala submodule ham toza, saqlanmagan
-# o'zgarishlarsiz)
+# ============================================================
+# 7) To'liq clone bilan solishtirish jadvali
+# ============================================================
+# | Usul                                          | Vaqt | Hajm  |
+# |------------------------------------------------|------|-------|
+# | git clone (to'liq)                             | 45s  | 520MB |
+# | --filter=blob:none --sparse + backend/frontend | 6s   | 45MB  |
 
-$ git worktree list
-/home/user/repo      3f2e1d0 [main]
-/home/user/hotfix     a8b7c6d [hotfix/vendor-update]
-$ git worktree remove ../hotfix
-# Ish kuni tugadi: worktree yopildi, submodule yangilandi, hook ishladi,
-# rerere konfliktni avtomatik yechdi — to'rtta vosita, bitta izchil ish
-# oqimida.**
+# ============================================================
+# 8) Shallow clone — tarix chuqurligini cheklash
+# ============================================================
+$ git clone --depth=1 https://github.com/team/student_platform.git shallow-clone
+Cloning into 'shallow-clone'...
+remote: Total 234 (delta 12)
+Receiving objects: 100% (234/234), 8.2 MiB | ...
+
+$ cd shallow-clone
+$ git log --oneline
+a1b2c3d (HEAD -> main) oxirgi commit
+# ATIGI BITTA commit — qolgan tarix UMUMAN yuklanmagan.
+
+$ git log --oneline HEAD~5
+fatal: ambiguous argument 'HEAD~5': unknown revision
+# Eski commit'larga umuman kira olmaymiz — bu partial clone'dan farq
+# qiladi, u yerda tarix TO'LIQ, faqat blob kechiktiriladi.
+
+# ============================================================
+# 9) Shallow'ni keyinroq to'liq tarixga aylantirish
+# ============================================================
+$ git fetch --unshallow
+remote: Enumerating objects: 15234, done.
+Receiving objects: 100% (15000/15000), 480 MiB | ...
+$ git log --oneline | wc -l
+15234
+# Endi to'liq tarix mavjud — lekin bu katta, sekin operatsiya (butun
+# tarixni bir zumda yuklaydi).
+
+# ============================================================
+# 10) Qaysi birini tanlash — jadval
+# ============================================================
+# | Ehtiyoj                                    | Yechim          |
+# |-----------------------------------------------|-------------------|
+# | CI'da faqat oxirgi kodni build qilish          | shallow clone     |
+# | Faqat backend/ bilan ishlash, TO'LIQ tarix     | partial+sparse    |
+# | git blame/log to'liq tarix kerak               | partial clone     |
+# | Disk joyi eng muhim, tarix umuman kerak emas   | shallow clone     |
