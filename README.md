@@ -1,127 +1,90 @@
+**# ============================================================
+# Yakuniy amaliyot: to'rt mavzuni bitta jamoaviy stsenariyda
 # ============================================================
-# 1) rerere'ni yoqish va birinchi konfliktni yechish
-# ============================================================
-$ git config rerere.enabled true
-$ git rerere status
-# hali hech narsa yo'q
 
-$ git merge feature-a
+# 1) Shoshilinch hotfix uchun worktree (6-dars)
+$ git worktree add ../hotfix main
+$ cd ../hotfix
+$ git switch -c hotfix/vendor-update
+
+# 2) vendor/ submodule'ini yangilash (7-dars)
+$ cd vendor/ui-kit
+$ git pull origin main
+$ cd ../..
+$ git add vendor/ui-kit
+$ git commit -m "vendor/ui-kit yangilandi"
+
+# 3) pre-commit hook maxfiy kalitni tekshiradi (8-dars)
+$ git commit -am "config.py yangilandi"
+XATO: staged o'zgarishlarda maxfiy kalit topildi!
+$ vim config.py   # kalitni .env'ga ko'chiramiz
+$ git commit -am "config.py yangilandi (kalit .env'ga ko'chirildi)"
+[hotfix/vendor-update abc123] config.py yangilandi
+
+# 4) main'ga birlashtirishda avvalgi konflikt qayta chiqadi, rerere yechadi (9-dars)
+$ git switch main
+$ git merge hotfix/vendor-update
 Auto-merging config.py
-CONFLICT (content): Merge conflict in config.py
-Recorded preimage for 'config.py'
-# "Recorded preimage" — rerere konfliktning KO'RINISHINI eslab qolayapti.
-
-$ cat config.py
-<<<<<<< HEAD
-TIMEOUT = 30
-=======
-TIMEOUT = 60
->>>>>>> feature-a
-$ vim config.py    # qo'lda TIMEOUT = 45 deb yechamiz
-$ git add config.py
-$ git commit
-Recorded resolution for 'config.py'.
-# "Recorded resolution" — bu safar YECHIMNI ham eslab qoldi.
-
-# ============================================================
-# 2) Xuddi shu konflikt qayta chiqsa — AVTOMATIK yechiladi
-# ============================================================
-$ git rebase main   # feature-a ni main ustiga qayta joylashtiramiz
-Auto-merging config.py
-CONFLICT (content): Merge conflict in config.py
 Resolved 'config.py' using previous resolution.
-# rerere DARHOL avvalgi yechimni qo'lladi — qayta qo'lda tuzatish shart emas!
-$ git status --short
-# (config.py allaqachon avtomatik yechilgan holda staged)
-$ git rebase --continue
-
-# ============================================================
-# 3) rerere keshini ko'rish
-# ============================================================
-$ ls .git/rr-cache/
-a3f291e8d7c6b5a4938271605f4e3d2c1b0a9f8/
-$ ls .git/rr-cache/a3f291e8d7c6b5a4938271605f4e3d2c1b0a9f8/
-postimage  preimage
-
-# ============================================================
-# 4) .gitattributes orqali custom merge driver
-# ============================================================
-$ cat .gitattributes
-package-lock.json merge=ours
-*.generated.json merge=ours
-
-$ git config merge.ours.driver true
-# "true" buyrug'i har doim 0 (muvaffaqiyat) qaytaradi -> HECH QANDAY
-# birlashtirish qilinmaydi, joriy branch versiyasi saqlanadi.
-
-$ git merge feature-b
-Auto-merging package-lock.json
+Auto-merging vendor/ui-kit
 Merge made by the 'ort' strategy.
-# package-lock.json'da konflikt BO'LSA HAM, u ko'rsatilmaydi —
-# HAR DOIM bizning (HEAD) versiyamiz saqlanadi, boshqa tomon e'tiborsiz.
+
+# 5) Push'dan oldin mahalliy test, keyin server tekshiruvi
+$ git push origin main
+pre-push: backend testlari (test.yml kabi)...
+3 passed
+# ... push davom etadi, GitHub serverida .github/workflows/test.yml
+# QAYTA, mustaqil ravishda ishga tushadi — bu ikkinchi, majburiy qatlam.
+
+# 6) Tozalash
+$ git worktree remove ../hotfix
 
 # ============================================================
-# 5) -X ours vs merge=ours — MUHIM farq
+# O'z-o'zini tekshirish: interaktiv jadval
 # ============================================================
-$ git merge -X ours feature-c
-# config.py'da konflikt bo'lsa — FAQAT konflikt qatorlarida bizning
-# versiyamiz tanlanadi, LEKIN feature-c'dagi BOSHQA (konfliktsiz)
-# o'zgarishlar hali ham qo'shiladi:
-$ git diff HEAD~1 --stat
-config.py       | 2 +-
-new_feature.py  | 15 +++++++++++++++    # <- bu hali ham qo'shildi!
-
-# merge=ours drayveri esa BUTUN faylni e'tiborsiz qoldiradi:
-$ git merge feature-d   # package-lock.json uchun merge=ours ishlaydi
-$ git diff HEAD~1 -- package-lock.json
-# (bo'sh — fayl UMUMAN o'zgarmadi, feature-d'dagi o'zgarishlar yo'qoldi)
+# | Savol                                      | Javob qayerda?     |
+# |----------------------------------------------|---------------------|
+# | worktree nima saqlaydi, nima ulashadi?       | 6-dars              |
+# | submodule vs subtree fayl saqlash farqi?     | 7-dars              |
+# | --no-verify nima uchun xavfli?               | 8-dars              |
+# | rerere ikkinchi safar nima deydi?            | 9-dars              |
 
 # ============================================================
-# 6) rerere'ni tozalash (eskirgan yechimlar to'planganda)
+# Qo'shimcha tekshiruv: worktree + submodule + hook birgalikda
 # ============================================================
-$ git rerere gc
-# gc.rerereResolved (odatda 60 kun) va gc.rerereUnresolved (15 kun)
-# muddatidan o'tgan yozuvlarni tozalaydi.
+$ git worktree list --porcelain | head -6
+worktree /home/user/repo
+HEAD 3f2e1d0c9b8a7d6e5f4a3b2c1d0e9f8a7b6c5d4e
+branch refs/heads/main
 
-# ============================================================
-# 7) diff3 konflikt uslubi — umumiy ajdodni ko'rish
-# ============================================================
-$ git config merge.conflictStyle diff3
-$ git merge feature-a
-CONFLICT (content): Merge conflict in config.py
+worktree /home/user/hotfix
+HEAD a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9
 
-$ cat config.py
-<<<<<<< HEAD
-TIMEOUT = 45
-||||||| a1b2c3d (umumiy ajdod)
-TIMEOUT = 30
-=======
-TIMEOUT = 60
->>>>>>> feature-a
-# Endi UCHTA versiya ko'rinadi: HEAD (45), asl ajdod (30), feature-a (60).
-# Buni ko'rib, "ikkalasi ham asl 30'dan boshqacha yo'nalishda o'zgartirgan"
-# ekanini tushunish osonlashadi — oddiy ikki tomonlama diff bunday
-# kontekstni bermas edi.
+$ cd ../hotfix
+$ git submodule foreach 'git log -1 --oneline'
+Entering 'vendor/ui-kit'
+9a8b7c1 v2.2.0 relizi
 
-# ============================================================
-# 8) git mergetool — vizual yechim
-# ============================================================
-$ git config merge.tool vimdiff
-$ git mergetool
-Merging:
-config.py
+$ git config core.hooksPath scripts/git-hooks
+$ git commit -am "config.py yangilandi"
+# pre-commit hook ishga tushadi, tekshiradi, muammo bo'lmasa o'tkazadi
 
-Normal merge conflict for 'config.py':
-  {local}: modified file
-  {base}: modified file
-  {remote}: modified file
-Hit return to start merge resolution tool (vimdiff):
-# vimdiff to'rt panelli ko'rinishda ochiladi: LOCAL | BASE | MERGED | REMOTE
-# Qo'lda kerakli qatorlarni tanlab, :wqa bilan saqlab chiqiladi.
+$ cd ../repo
+$ git merge hotfix/vendor-update
+Resolved 'config.py' using previous resolution.
+$ git rerere status
+# (bo'sh — barcha konfliktlar allaqachon yechilgan)
 
-$ git status --short
-M  config.py    # mergetool orqali yechilgan, endi staged
-$ git commit --no-edit
-Recorded resolution for 'config.py'.
-# rerere BU YERDA ham ishlaydi — mergetool orqali yechilgan konflikt ham
-# keyingi safar avtomatik eslab qolinadi.
+$ git submodule foreach 'git status --short'
+Entering 'vendor/ui-kit'
+Entering 'vendor/charts'
+# (bo'sh ikkalasida ham — ikkala submodule ham toza, saqlanmagan
+# o'zgarishlarsiz)
+
+$ git worktree list
+/home/user/repo      3f2e1d0 [main]
+/home/user/hotfix     a8b7c6d [hotfix/vendor-update]
+$ git worktree remove ../hotfix
+# Ish kuni tugadi: worktree yopildi, submodule yangilandi, hook ishladi,
+# rerere konfliktni avtomatik yechdi — to'rtta vosita, bitta izchil ish
+# oqimida.**
