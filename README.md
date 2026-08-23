@@ -1,123 +1,81 @@
 # ============================================================
-# 1) test.yml'dagi o'rnatilgan keshlash (real, ikkala job)
+# Sintez workflow: 0-4-darslarning HAMMASI bitta faylda
 # ============================================================
-- name: Set up Python
-  uses: actions/setup-python@v5
-  with:
-    python-version: "3.11"
-    cache: pip
-    cache-dependency-path: backend/requirements.txt
+name: Full CI/CD Recap Demo
+# ^ 0-dars: workflow darajasidagi name
 
-- name: Set up Node
-  uses: actions/setup-node@v4
-  with:
-    node-version: "20"
-    cache: npm
-    cache-dependency-path: frontend/package-lock.json
-# Ikkalasi ham "cache: <manager>" - GitHub qaysi papkani keshlashni
-# (~/.cache/pip yoki node_modules manba kesh papkasini) o'zi biladi,
-# faqat cache-dependency-path orqali qaysi fayl KESH KALITINI
-# aniqlashini ko'rsatish kifoya.
+on:                                    # <- 1-dars: trigger strategiyasi
+  push:
+    branches: [server]
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
 
-# ============================================================
-# 2) deploy-frontend.yml'dagi xuddi shu naqsh
-# ============================================================
-- name: Setup Node
-  uses: actions/setup-node@v4
-  with:
-    node-version: '20'
-    cache: npm
-    cache-dependency-path: frontend/package-lock.json
-# deploy-frontend.yml HAM xuddi shu keshlash strategiyasidan foydalanadi -
-# har bir deploy'da npm ci'ni tezlashtirish uchun.
+concurrency:                           # <- 1-dars: bir vaqtda ikkita
+  group: recap-deploy                  #    deploy to'qnashmasligi
+  cancel-in-progress: false
 
-# ============================================================
-# 3) actions/cache'ni to'g'ridan-to'g'ri ishlatish (qo'lda)
-# ============================================================
-- name: Cache pip packages manually
-  uses: actions/cache@v4
-  with:
-    path: ~/.cache/pip
-    key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
-    restore-keys: |
-      ${{ runner.os }}-pip-
-# key: aniq mos kelish uchun - hashFiles() requirements.txt kontentidan
-# hash hisoblaydi (git obyektlarining SHA-1 kontent-addressing
-# tamoyiliga o'xshash - 112-kurs 0-darsini eslang).
-# restore-keys: aniq mos kelmasa (masalan requirements.txt biroz
-# o'zgargan bo'lsa), eng yaqin mos keluvchi ESKI kesh'ni tiklaydi -
-# to'liq bo'sh boshlashdan ko'ra tezroq.
+jobs:
+  test-and-deploy:
+    name: Test (${{ matrix.python-version }}) then deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:                          # <- 3-dars: matrix build
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
 
-# ============================================================
-# 4) Playwright brauzerlarini keshlash namunasi (frontend E2E uchun)
-# ============================================================
-- name: Cache Playwright browsers
-  uses: actions/cache@v4
-  id: playwright-cache
-  with:
-    path: ~/.cache/ms-playwright
-    key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+    steps:
+      - uses: actions/checkout@v4      # <- 0-dars: uses bilan tayyor action
 
-- name: Install Playwright browsers
-  if: steps.playwright-cache.outputs.cache-hit != 'true'
-  working-directory: frontend
-  run: npx playwright install --with-deps
-# id: bilan step natijasiga keyingi step'dan murojaat qilinadi.
-# cache-hit != 'true' - agar kesh TOPILGAN bo'lsa, brauzerlarni QAYTA
-# yuklab olishning hojati yo'q (yuklab olish o'zi bir necha daqiqa ketadi).
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip                   # <- 4-dars: keshlash
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies      # <- 0-dars: run bilan shell buyrug'i
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        working-directory: backend
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./test.db
+          SECRET_KEY: test-secret-key-for-ci-only-not-used-in-prod
+        run: python -m pytest tests/ -v --tb=short
+
+      - name: Configure SSH             # <- 2-dars: secret vs oddiy env
+        if: matrix.python-version == '3.11'   # faqat bitta versiyada deploy
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST:        ${{ secrets.SSH_HOST }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
 
 # ============================================================
-# 5) Keshning haqiqiy tezlik farqi (namunaviy o'lchov)
+# Har bir savolga qisqa javob (o'z-o'zini tekshirish uchun)
 # ============================================================
-# Kesh YO'Q (MISS):    npm ci -> ~55 soniya (tarmoqdan yuklash)
-# Kesh BOR (HIT):      npm ci -> ~8 soniya  (mahalliy nusxadan)
-# Kesh YO'Q (MISS):    pip install -r requirements.txt -> ~30 soniya
-# Kesh BOR (HIT):      pip install -r requirements.txt -> ~4 soniya
-# Sonlar taxminiy - real vaqt tarmoq holati va paket sonига bog'liq,
-# lekin nisbat (5-8x tezlashish) odatiy CI loyihalarida barqaror kuzatiladi.
-
-# ============================================================
-# 6) gh CLI orqali repozitoriy kesh'larini ko'rish va o'chirish
-# ============================================================
-$ gh cache list
-ID      KEY                                              SIZE     CREATED
-123456  Linux-pip-3a7f9e2b1c...                          45 MB    2 hours ago
-123457  Linux-npm-9d8c7b6a5f...                          120 MB   1 day ago
-123458  playwright-Linux-2e1d0c9b...                     310 MB   3 days ago
-
-$ gh cache delete 123458
-# Eskirgan yoki noto'g'ri kesh'ni qo'lda o'chirish - masalan, kesh
-# buzilgan (corrupt) bo'lib qolsa yoki 10 GB limitiga yaqinlashilsa.
-
-$ gh cache delete --all
-# BARCHA repozitoriy kesh'larini tozalash - keyingi run to'liq MISS
-# bo'ladi, lekin bu xavfsiz: build hech qachon shu sababdan sinmaydi.
-
-# ============================================================
-# 7) Docker layer keshlash - boshqa turdagi kesh, xuddi shu tamoyil
-# ============================================================
-- name: Set up Docker Buildx
-  uses: docker/setup-buildx-action@v3
-
-- name: Build with layer cache
-  uses: docker/build-push-action@v5
-  with:
-    context: ./backend
-    push: false
-    cache-from: type=gha
-    cache-to: type=gha,mode=max
-# type=gha - GitHub Actions'ning o'z kesh backend'idan foydalanish,
-# xuddi actions/cache kabi, lekin Docker qatlamlari (layer) uchun
-# maxsuslashtirilgan. Har bir o'zgarmagan Dockerfile qatlami qayta
-# qurilmaydi - faqat o'zgargan qatlamdan boshlab qayta quriladi.
-
-# ============================================================
-# 8) Kesh o'lchamini kuzatish - GitHub UI orqali
-# ============================================================
-# Repo -> Settings -> Actions -> Caches bo'limida:
-#   - Har bir kesh yozuvi: kalit, hajm, oxirgi ishlatilgan vaqt
-#   - Umumiy sig'im chizig'i (10 GB'ga nisbatan foiz)
-#   - "Delete" tugmasi - qo'lda tozalash uchun
-# Bu bo'lim ayniqsa ko'p matrix kombinatsiyasi ishlatilganda foydali -
-# har bir kombinatsiya o'z alohida kesh yozuvini yaratishi mumkin, va
-# ular jamlanib tez orada 10 GB limitiga yaqinlashishi mumkin.
+# 1) frontend/src/App.js -> server branch:
+#    test.yml -> ISHGA TUSHADI (har qanday branch)
+#    deploy-backend.yml -> ISHGA TUSHMAYDI (paths mos kelmadi)
+#    deploy-frontend.yml -> ISHGA TUSHADI (paths=frontend/** mos keldi)
+#
+# 2) SSH_PRIVATE_KEY maxfiy (server kirish huquqi), NODE_OPTIONS oshkor
+#    bo'lsa ham xavf yo'q (faqat build sozlamasi).
+#
+# 3) Ha, fail-fast: true (standart) bo'lsa, 3.10 xato bersa, 3.11/3.12
+#    HAM darhol bekor qilinadi - shuning uchun ko'p loyihalar
+#    fail-fast: false qo'yadi (3-darsni eslang).
+#
+# 4) Ha, o'zgaradi - kesh kaliti requirements.txt HASH'idan hisoblanadi,
+#    fayl o'zgarsa hash ham o'zgaradi, demak eski kesh endi mos kelmaydi
+#    (MISS), yangi kesh yaratiladi.
