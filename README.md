@@ -1,123 +1,91 @@
 # ============================================================
-# 1) test.yml — ushbu platformaning haqiqiy workflow fayli
-#    (.github/workflows/test.yml, to'liq holicha)
+# 1) test.yml trigger qismi — keng, HAR QANDAY branch
 # ============================================================
-name: Tests
-
 on:
   push:
     branches: ["**"]
   pull_request:
     branches: [master]
-
-jobs:
-  backend:
-    name: Backend (pytest)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Install dependencies
-        working-directory: backend
-        run: pip install -r requirements.txt
-
-      - name: Run tests
-        working-directory: backend
-        env:
-          DATABASE_URL: sqlite+aiosqlite:///./test.db
-          SECRET_KEY: test-secret-key-for-ci-only-not-used-in-prod
-        run: python -m pytest tests/ -v --tb=short
-
-  frontend:
-    name: Frontend (Jest)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        working-directory: frontend
-        run: npm ci --no-audit --no-fund
-
-      - name: Run tests
-        working-directory: frontend
-        env:
-          CI: "true"
-        run: npx react-scripts test --watchAll=false --passWithNoTests
+# "**" glob naqshi — feature/xyz, bugfix/abc, hattoki ismsiz branch'lar
+# ham mos keladi. pull_request faqat master'ga yo'naltirilgan PR'lar uchun.
 
 # ============================================================
-# 2) Anatomiyani qatma-qat o'qish
+# 2) deploy-backend.yml trigger qismi — tor, faqat backend/** + server branch
 # ============================================================
-# name: Tests                    <- workflow darajasi: GitHub UI'da shu
-#                                    nom "Actions" bo'limida ko'rinadi
+on:
+  push:
+    branches: [server]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+# ============================================================
+# 3) deploy-frontend.yml trigger qismi — o'ziga xos izoh bilan
+# ============================================================
+on:
+  push:
+    branches: [server]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+    # Lets you click "Run workflow" in the Actions tab — handy for forcing
+    # a rebuild without pushing a code change (e.g. after rotating a key).
+
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: false
+
+# ============================================================
+# 4) Amaliy stsenariy: nechta workflow ishga tushadi?
+# ============================================================
+# Stsenariy A: `feature/login` branch'iga faqat frontend/src/App.js
+# o'zgartirilib push qilinsa:
+#   - test.yml    -> ISHGA TUSHADI (push: branches ["**"])
+#   - deploy-backend.yml -> ISHGA TUSHMAYDI (branch server emas)
+#   - deploy-frontend.yml -> ISHGA TUSHMAYDI (branch server emas)
 #
-# on: push / pull_request        <- workflow darajasi: qachon ishga tushadi
-#                                    (keyingi darsda batafsil)
+# Stsenariy B: `server` branch'iga faqat backend/app/main.py o'zgartirilib
+# push qilinsa:
+#   - test.yml    -> ISHGA TUSHADI (har qanday branch)
+#   - deploy-backend.yml -> ISHGA TUSHADI (branch=server, paths=backend/**)
+#   - deploy-frontend.yml -> ISHGA TUSHMAYDI (paths mos kelmadi)
 #
-# jobs:                          <- ikkita mustaqil job: backend, frontend
-#   backend:                     <- job darajasi
-#     runs-on: ubuntu-latest     <- qaysi virtual mashinada
-#     timeout-minutes: 10        <- job 10 daqiqadan ko'p ketsa, majburan
-#                                    to'xtatiladi (osilib qolgan testni
-#                                    abadiy kutmaslik uchun)
-#     steps:                     <- step darajasi, KETMA-KET bajariladi
-#       - uses: actions/checkout@v4          <- 1-step: tayyor action
-#       - name: Set up Python                <- "name" ixtiyoriy — UI'da
-#         uses: actions/setup-python@v5           chiroyli ko'rsatish uchun
-#       - name: Install dependencies          <- 3-step: run bilan
-#         run: pip install -r requirements.txt
+# Stsenariy C: `server` branch'iga backend/ VA frontend/ ikkalasi ham
+# bitta commit'da o'zgartirilib push qilinsa:
+#   - test.yml    -> ISHGA TUSHADI
+#   - deploy-backend.yml  -> ISHGA TUSHADI
+#   - deploy-frontend.yml -> ISHGA TUSHADI (ikkalasi HAM parallel, lekin
+#     ularning ICHIDAGI concurrency group'lari alohida — bir-birini
+#     to'sib qo'ymaydi, faqat OʻZ turidagi ikkinchi runni to'sadi)
 
 # ============================================================
-# 3) working-directory — nega backend/frontend prefiksi bor
+# 5) workflow_dispatch'ga kirish parametri qo'shish (kengaytma)
 # ============================================================
-# actions/checkout@v4 BUTUN repozitoriyani (backend/ va frontend/ ikkalasini
-# ham) runner'ga klonlaydi. Lekin backend job'ining "Install dependencies"
-# step'i faqat backend/requirements.txt bilan ishlashi kerak — shuning uchun
-# har bir run: qatoriga alohida "working-directory: backend" yozilgan.
-# Buni yozmasangiz, `pip install -r requirements.txt` ildiz papkada
-# requirements.txt qidiradi va topolmay, xato beradi.
-
-$ ls .github/workflows/
-deploy-backend.yml  deploy-frontend.yml  test.yml
-
-# ============================================================
-# 4) Workflow'ni GitHub UI'dan kuzatish
-# ============================================================
-# Reponing "Actions" tabiga o'ting -> "Tests" workflow'ini tanlang ->
-# har bir push/PR uchun alohida "run" ro'yxatga olinadi. Har bir run ichida
-# backend va frontend job'lari alohida ustunlarda, parallel progress bilan
-# ko'rinadi. Muvaffaqiyatsiz step qizil X bilan, muvaffaqiyatli esa yashil
-# tik bilan belgilanadi — 11-darsda buni disk qilishni chuqur o'rganamiz.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Qaysi muhitga deploy qilish'
+        required: true
+        default: 'production'
+        type: choice
+        options: [production, staging]
+# Ishga tushirilganda GitHub UI kirish maydonini so'raydi;
+# ${{ github.event.inputs.environment }} orqali workflow ichida o'qiladi.
 
 # ============================================================
-# 5) Minimal, o'zingiz sinab ko'rish uchun workflow
+# 6) schedule bilan kunlik vazifa (hozircha bu repoda ishlatilmagan)
 # ============================================================
-# .github/workflows/hello.yml sifatida saqlab, push qiling:
-name: Hello CI
-
-on: [push]
-
-jobs:
-  say-hello:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: echo "Salom, $GITHUB_ACTOR! Bu commit $GITHUB_SHA."
-      - run: ls -la
+on:
+  schedule:
+    - cron: '0 3 * * *'   # har kuni soat 03:00 UTC da
+# Cron formati: daqiqa soat kun-oy oy hafta-kuni.
+# GitHub'ning o'z jadvali biroz kechikishi mumkin (yuklama past bo'lganda
+# yaqinroq, yuqori bo'lganda 10-15 daqiqagacha kechikishi mumkin) —
+# aniq vaqtga tayanadigan muhim vazifalar uchun bu cheklovni bilib qo'ying.
