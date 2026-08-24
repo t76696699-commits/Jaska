@@ -1,95 +1,90 @@
 # ============================================================
-# 1) Log'dagi ::error:: annotatsiyasini o'qish
+# To'liq pipeline: har bir qismi qaysi darsdan (6-11) kelganini
+# izohlarda ko'rsatadi
 # ============================================================
-# deploy-frontend.yml'dagi haqiqiy misol:
-- name: Verify build artefact
-  run: |
-    test -f frontend/build/index.html || { echo "::error::build/index.html missing — aborting deploy"; exit 1; }
 
-# Agar bu step muvaffaqiyatsiz bo'lsa, Actions UI'da:
-#   [ERROR] build/index.html missing — aborting deploy
-# qatori QIZIL rangda, alohida "Annotations" bo'limida ko'rinadi -
-# butun log ichida qidirishning hojati yo'q.
+# --- test.yml (6-dars: artifact + 9-dars: reusable workflow) ---
+name: Tests
 
-# ============================================================
-# 2) working-directory unutilgan xato (keng tarqalgan #1)
-# ============================================================
-# XATO (working-directory yo'q):
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [master]
+
 jobs:
   backend:
+    uses: ./.github/workflows/_reusable-backend-test.yml   # <- 9-dars
+    with:
+      python-version: "3.11"
+    secrets: inherit
+
+  frontend:
+    name: Frontend (Jest)
+    runs-on: ubuntu-latest                                   # <- 10-dars: GitHub-hosted
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.11"
-      - run: pip install -r requirements.txt   # <- YO'Q: working-directory!
-# Xato xabari:
-#   ERROR: Could not open requirements file: [Errno 2] No such file or
-#   directory: 'requirements.txt'
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - working-directory: frontend
+        env:
+          CI: "true"
+        run: npx react-scripts test --watchAll=false --passWithNoTests
+      - name: Upload test artifacts on failure                # <- 6-dars
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-test-logs
+          path: frontend/coverage/
 
-# TO'G'RI:
-      - working-directory: backend
-        run: pip install -r requirements.txt
+# --- Branch protection (8-dars, gh CLI orqali sozlangan) ---
+# required_status_checks.contexts: ["Backend (pytest)", "Frontend (Jest)"]
+# required_pull_request_reviews.required_approving_review_count: 1
+# required_status_checks.strict: true (branch up-to-date bo'lishi shart)
 
-# ============================================================
-# 3) env o'zgaruvchisi CI'da yo'qligi (keng tarqalgan #2)
-# ============================================================
-# Mahalliyda ishlaydi (.env fayli orqali DATABASE_URL bor), lekin CI'da
-# .env fayli YO'Q (odatda .gitignore'da) - shuning uchun test.yml buni
-# ANIQ env: orqali beradi:
-- name: Run tests
-  working-directory: backend
-  env:
-    DATABASE_URL: sqlite+aiosqlite:///./test.db
-    SECRET_KEY: test-secret-key-for-ci-only-not-used-in-prod
-  run: python -m pytest tests/ -v --tb=short
-# Agar bu env: bloki YO'QOLSA, xato odatda:
-#   KeyError: 'DATABASE_URL'  yoki  sqlalchemy.exc.ArgumentError
-
-# ============================================================
-# 4) SSH secret xatosi (keng tarqalgan #3)
-# ============================================================
-$ ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes user@host "..."
-# Muvaffaqiyatsiz bo'lsa:
-Permission denied (publickey).
-# Eng ko'p uchraydigan sabablar:
-#  a) SSH_PRIVATE_KEY secret'i noto'liq nusxalangan (masalan oxirgi
-#     bo'sh qator yo'qolgan) - printf '%s\n' ishlatilishi aynan shu
-#     muammoni oldini olish uchun (deploy-backend.yml'da ko'rgandek)
-#  b) Serverdagi ~/.ssh/authorized_keys hali yangi PUBLIC kalitni
-#     o'z ichiga OLMAGAN
-#  c) Xato foydalanuvchi nomi (SSH_USER) yoki xato host (SSH_HOST)
-
-# ============================================================
-# 5) gh CLI orqali muvaffaqiyatsiz run'ni tekshirish va qayta ishga tushirish
-# ============================================================
-$ gh run list --workflow=test.yml --limit 5
-STATUS  TITLE                    WORKFLOW   BRANCH   EVENT  ID
-X       fix: auth bug            Tests      server   push   123456789
-
-$ gh run view 123456789 --log-failed
-# Faqat MUVAFFAQIYATSIZ step'larning to'liq logini ko'rsatadi -
-# muvaffaqiyatli step'larni skroll qilishga hojat yo'q.
-
-$ gh run rerun 123456789 --failed
-# Faqat muvaffaqiyatsiz job'larni qayta ishga tushiradi (muvaffaqiyatli
-# job'larni qayta bajarmaydi - vaqt tejaydi).
+# --- deploy-backend.yml (7-dars) ---
+name: Deploy Backend
+on:
+  push:
+    branches: [server]
+    paths: ['backend/**']
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh && printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+      - name: Deploy and verify
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$SSH_HOST" "systemctl restart backend && systemctl is-active --quiet backend"
+          # Muvaffaqiyatsizlik holatida - 11-dars: log'ni o'qib,
+          # "Permission denied" (secret muammosi) yoki "inactive"
+          # (kod muammosi) ekanini aniqlash.
 
 # ============================================================
-# 6) YAML'ni push qilishdan OLDIN mahalliyda tekshirish
+# O'z-o'zini tekshirish savollariga qisqa javoblar
 # ============================================================
-$ pip install yamllint
-$ yamllint .github/workflows/test.yml
-.github/workflows/test.yml
-  12:9      error    wrong indentation: expected 10 but found 8  (indentation)
-
-# Yoki tezroq, o'rnatishsiz:
-$ python -c "import yaml; yaml.safe_load(open('.github/workflows/test.yml'))"
-# Xato bo'lsa, aniq qator raqami bilan yaml.scanner.ScannerError chiqadi -
-# bu push qilishdan oldin, hattoki GitHub'ga yuborishdan oldin xatoni
-# ushlaydi.
-
-$ gh workflow view test.yml
-# Workflow GitHub tomonidan qabul qilinganini (sintaksis to'g'ri
-# ekanini) tasdiqlaydi - agar fayl noto'g'ri bo'lsa, bu buyruq workflow
-# ro'yxatda "disabled" yoki umuman ko'rinmasligi mumkinligini bildiradi.
+# 1) actions/upload-artifact (build job'ida) + actions/download-artifact
+#    (deploy job'ida), bir xil name: orqali bog'lanadi.
+# 2) Backend serverda ISHLAYDI (systemd) - SSH orqali yangilanadi;
+#    frontend STATIK fayl - CI'da qurilib, rsync qilinadi.
+# 3) job'ning name: maydonidan; o'zgartirilsa, eski qoida hech qachon
+#    mos kelmay, PR abadiy "kutilmoqda" holatida qoladi.
+# 4) Composite action - step darajasida (bitta job ichida); reusable
+#    workflow - butun job(lar) darajasida, o'z runner'i bilan.
+# 5) Ishonchsiz tashqi PR kodi runner tarmog'ida bajarilishi mumkin.
+# 6) SSH kaliti noto'g'ri/eskirgan yoki authorized_keys yangilanmagan.
