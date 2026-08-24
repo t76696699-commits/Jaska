@@ -1,84 +1,95 @@
 # ============================================================
-# 1) Ushbu repo'ning haqiqiy tanlovi - GitHub-hosted, uchala faylda ham
+# 1) Log'dagi ::error:: annotatsiyasini o'qish
 # ============================================================
-# test.yml:
+# deploy-frontend.yml'dagi haqiqiy misol:
+- name: Verify build artefact
+  run: |
+    test -f frontend/build/index.html || { echo "::error::build/index.html missing — aborting deploy"; exit 1; }
+
+# Agar bu step muvaffaqiyatsiz bo'lsa, Actions UI'da:
+#   [ERROR] build/index.html missing — aborting deploy
+# qatori QIZIL rangda, alohida "Annotations" bo'limida ko'rinadi -
+# butun log ichida qidirishning hojati yo'q.
+
+# ============================================================
+# 2) working-directory unutilgan xato (keng tarqalgan #1)
+# ============================================================
+# XATO (working-directory yo'q):
 jobs:
   backend:
-    runs-on: ubuntu-latest    # <- GitHub-hosted
-  frontend:
-    runs-on: ubuntu-latest    # <- GitHub-hosted
-
-# deploy-backend.yml:
-jobs:
-  deploy:
-    runs-on: ubuntu-latest    # <- GitHub-hosted (SSH orqali PROD serverga ulanadi)
-
-# deploy-frontend.yml:
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest    # <- GitHub-hosted (build shu yerda, keyin rsync)
-
-# ============================================================
-# 2) Agar self-hosted ishlatilganda - deploy-backend.yml QANDAY o'zgarardi
-# ============================================================
-# HOZIRGI (GitHub-hosted + SSH):
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
     steps:
-      - name: Configure SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          mkdir -p ~/.ssh && printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-      - name: Pull and restart (orqali SSH)
-        run: ssh -i ~/.ssh/deploy_key user@host "cd /app && git pull && systemctl restart app"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt   # <- YO'Q: working-directory!
+# Xato xabari:
+#   ERROR: Could not open requirements file: [Errno 2] No such file or
+#   directory: 'requirements.txt'
 
-# MUQOBIL (self-hosted, prod serverning o'zida ishlaydi):
-jobs:
-  deploy:
-    runs-on: self-hosted       # <- prod serverning o'zi runner sifatida ro'yxatdan o'tgan
-    steps:
-      # SSH kaliti, ssh-keyscan, Configure SSH step'i - UMUMAN KERAK EMAS,
-      # chunki runner ALLAQACHON prod serverning o'zi.
-      - run: cd /app && git pull origin server
-      - run: source venv/bin/activate && pip install -r requirements.txt --quiet
-      - run: sudo systemctl restart student-platform-backend
+# TO'G'RI:
+      - working-directory: backend
+        run: pip install -r requirements.txt
 
 # ============================================================
-# 3) Self-hosted runner'ni repo'ga ro'yxatdan o'tkazish (bir martalik)
+# 3) env o'zgaruvchisi CI'da yo'qligi (keng tarqalgan #2)
 # ============================================================
-$ mkdir actions-runner && cd actions-runner
-$ curl -o actions-runner-linux-x64.tar.gz -L \
-    https://github.com/actions/runner/releases/download/v2.319.1/actions-runner-linux-x64-2.319.1.tar.gz
-$ tar xzf actions-runner-linux-x64.tar.gz
-$ ./config.sh --url https://github.com/OWNER/REPO --token <RUNNER_TOKEN>
-$ ./run.sh
-# Runner endi Settings -> Actions -> Runners bo'limida "Idle" (bo'sh)
-# holatida ko'rinadi va runs-on: self-hosted bo'lgan har qanday job'ni
-# kutib turadi.
+# Mahalliyda ishlaydi (.env fayli orqali DATABASE_URL bor), lekin CI'da
+# .env fayli YO'Q (odatda .gitignore'da) - shuning uchun test.yml buni
+# ANIQ env: orqali beradi:
+- name: Run tests
+  working-directory: backend
+  env:
+    DATABASE_URL: sqlite+aiosqlite:///./test.db
+    SECRET_KEY: test-secret-key-for-ci-only-not-used-in-prod
+  run: python -m pytest tests/ -v --tb=short
+# Agar bu env: bloki YO'QOLSA, xato odatda:
+#   KeyError: 'DATABASE_URL'  yoki  sqlalchemy.exc.ArgumentError
 
 # ============================================================
-# 4) Label orqali muayyan self-hosted runner'ni tanlash
+# 4) SSH secret xatosi (keng tarqalgan #3)
 # ============================================================
-jobs:
-  gpu-training:
-    runs-on: [self-hosted, gpu, linux]   # <- faqat shu 3 ta labelga ega
-                                          #    runner'da ishga tushadi
-    steps:
-      - run: nvidia-smi
-      - run: python train_model.py
+$ ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes user@host "..."
+# Muvaffaqiyatsiz bo'lsa:
+Permission denied (publickey).
+# Eng ko'p uchraydigan sabablar:
+#  a) SSH_PRIVATE_KEY secret'i noto'liq nusxalangan (masalan oxirgi
+#     bo'sh qator yo'qolgan) - printf '%s\n' ishlatilishi aynan shu
+#     muammoni oldini olish uchun (deploy-backend.yml'da ko'rgandek)
+#  b) Serverdagi ~/.ssh/authorized_keys hali yangi PUBLIC kalitni
+#     o'z ichiga OLMAGAN
+#  c) Xato foydalanuvchi nomi (SSH_USER) yoki xato host (SSH_HOST)
 
 # ============================================================
-# 5) Xavfsizlik: public repo'da self-hosted runner ishlatishning xavfi
+# 5) gh CLI orqali muvaffaqiyatsiz run'ni tekshirish va qayta ishga tushirish
 # ============================================================
-# Agar OWNER/REPO PUBLIC bo'lsa va self-hosted runner ulangan bo'lsa:
-#   1. Tashqi odam fork qilib, zararli kod bilan PR ochadi
-#   2. Agar workflow pull_request_target yoki noto'g'ri sozlangan
-#      pull_request trigger bilan ishlasa, bu kod SIZNING self-hosted
-#      runner'ingizda BAJARILISHI mumkin
-#   3. Runner joylashgan tarmoqqa (masalan ichki baza, boshqa serverlar)
-#      kirish xavfi tug'iladi
-# Shu sababli GitHub PUBLIC repo'lar uchun self-hosted'ni faqat qattiq
-# nazorat (masalan required approval for first-time contributors) bilan
-# ishlatishni tavsiya qiladi.
+$ gh run list --workflow=test.yml --limit 5
+STATUS  TITLE                    WORKFLOW   BRANCH   EVENT  ID
+X       fix: auth bug            Tests      server   push   123456789
+
+$ gh run view 123456789 --log-failed
+# Faqat MUVAFFAQIYATSIZ step'larning to'liq logini ko'rsatadi -
+# muvaffaqiyatli step'larni skroll qilishga hojat yo'q.
+
+$ gh run rerun 123456789 --failed
+# Faqat muvaffaqiyatsiz job'larni qayta ishga tushiradi (muvaffaqiyatli
+# job'larni qayta bajarmaydi - vaqt tejaydi).
+
+# ============================================================
+# 6) YAML'ni push qilishdan OLDIN mahalliyda tekshirish
+# ============================================================
+$ pip install yamllint
+$ yamllint .github/workflows/test.yml
+.github/workflows/test.yml
+  12:9      error    wrong indentation: expected 10 but found 8  (indentation)
+
+# Yoki tezroq, o'rnatishsiz:
+$ python -c "import yaml; yaml.safe_load(open('.github/workflows/test.yml'))"
+# Xato bo'lsa, aniq qator raqami bilan yaml.scanner.ScannerError chiqadi -
+# bu push qilishdan oldin, hattoki GitHub'ga yuborishdan oldin xatoni
+# ushlaydi.
+
+$ gh workflow view test.yml
+# Workflow GitHub tomonidan qabul qilinganini (sintaksis to'g'ri
+# ekanini) tasdiqlaydi - agar fayl noto'g'ri bo'lsa, bu buyruq workflow
+# ro'yxatda "disabled" yoki umuman ko'rinmasligi mumkinligini bildiradi.
