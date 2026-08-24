@@ -1,90 +1,132 @@
 # ============================================================
-# To'liq pipeline: har bir qismi qaysi darsdan (6-11) kelganini
-# izohlarda ko'rsatadi
+# 1) git bisect'ni workflow_dispatch orqali avtomatlashtirish
 # ============================================================
-
-# --- test.yml (6-dars: artifact + 9-dars: reusable workflow) ---
-name: Tests
+name: Automated Bisect
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
-    branches: [master]
+  workflow_dispatch:
+    inputs:
+      good_ref:
+        description: "Oxirgi ma'lum YAXSHI commit/tag (masalan v1.2.0)"
+        required: true
+      bad_ref:
+        description: "Ma'lum YOMON commit (masalan HEAD)"
+        required: true
+        default: HEAD
 
 jobs:
-  backend:
-    uses: ./.github/workflows/_reusable-backend-test.yml   # <- 9-dars
-    with:
-      python-version: "3.11"
-    secrets: inherit
-
-  frontend:
-    name: Frontend (Jest)
-    runs-on: ubuntu-latest                                   # <- 10-dars: GitHub-hosted
+  bisect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - working-directory: frontend
-        run: npm ci --no-audit --no-fund
-      - working-directory: frontend
-        env:
-          CI: "true"
-        run: npx react-scripts test --watchAll=false --passWithNoTests
-      - name: Upload test artifacts on failure                # <- 6-dars
-        if: failure()
-        uses: actions/upload-artifact@v4
+          fetch-depth: 0     # <- BUTUN tarix kerak, bisect uchun shart
+                              #    (112-kurs 2-darsi: packfile/gc'ni eslang)
+
+      - uses: actions/setup-python@v5
         with:
-          name: frontend-test-logs
-          path: frontend/coverage/
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
 
-# --- Branch protection (8-dars, gh CLI orqali sozlangan) ---
-# required_status_checks.contexts: ["Backend (pytest)", "Frontend (Jest)"]
-# required_pull_request_reviews.required_approving_review_count: 1
-# required_status_checks.strict: true (branch up-to-date bo'lishi shart)
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
 
-# --- deploy-backend.yml (7-dars) ---
-name: Deploy Backend
+      - name: Run automated bisect
+        run: |
+          git bisect start
+          git bisect bad ${{ inputs.bad_ref }}
+          git bisect good ${{ inputs.good_ref }}
+          # git bisect run - har bir qadamda BUYRUQNI avtomatik bajaradi;
+          # buyruq 0 qaytarsa "good", boshqa kod qaytarsa "bad" deb belgilaydi.
+          git bisect run bash -c "cd backend && python -m pytest tests/test_regression.py -x -q"
+          echo "Bisect natijasi:"
+          git bisect log
+          git bisect reset
+
+# ============================================================
+# 2) pre-commit hook + CI'dagi bir xil tekshiruv (112-kurs 8-darsi amaliyoti)
+# ============================================================
+# .pre-commit-config.yaml (mahalliy, --no-verify bilan chetlab o'tilishi mumkin)
+repos:
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        language_version: python3.11
+
+# test.yml'ga QO'SHILGAN yangi job (chetlab bo'lmaydigan ikkinchi qatlam):
+jobs:
+  format-check:
+    name: Black formatting (chetlab bo'lmaydigan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install black==24.4.2
+      - working-directory: backend
+        run: black --check .
+# Mahalliy hook TEZ, lekin --no-verify bilan o'tkazib yuborilishi mumkin.
+# CI job xuddi shu buyruqni ishlatadi, lekin HECH KIM uni chetlab o'ta
+# olmaydi (8-darsdagi required status check bilan birlashtirilsa).
+
+# ============================================================
+# 3) Faqat SEMVER tag push qilinganda deploy (annotated tag amaliyoti)
+# ============================================================
+name: Deploy Backend On Release Tag
+
 on:
   push:
-    branches: [server]
-    paths: ['backend/**']
-concurrency:
-  group: deploy-backend
-  cancel-in-progress: false
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'   # <- faqat v1.2.0 kabi ANIQ SEMVER teglar
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Configure SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+      - name: Confirm this is an annotated tag
         run: |
-          mkdir -p ~/.ssh && printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-      - name: Deploy and verify
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-        run: |
-          ssh -i ~/.ssh/deploy_key "$SSH_HOST" "systemctl restart backend && systemctl is-active --quiet backend"
-          # Muvaffaqiyatsizlik holatida - 11-dars: log'ni o'qib,
-          # "Permission denied" (secret muammosi) yoki "inactive"
-          # (kod muammosi) ekanini aniqlash.
+          git cat-file -t "$GITHUB_REF_NAME" || echo "Lightweight tag (obyekt emas)"
+          # 112-kurs 0-darsi: annotated tag ALOHIDA obyekt, lightweight
+          # tag esa shunchaki ref - shu farq shu yerda amaliy tekshiriladi.
+      - name: Deploy (namuna)
+        run: echo "Deploying release $GITHUB_REF_NAME to production"
 
 # ============================================================
-# O'z-o'zini tekshirish savollariga qisqa javoblar
+# 4) Monorepo: paths + matrix birlashuvi (kontseptual loyiha)
 # ============================================================
-# 1) actions/upload-artifact (build job'ida) + actions/download-artifact
-#    (deploy job'ida), bir xil name: orqali bog'lanadi.
-# 2) Backend serverda ISHLAYDI (systemd) - SSH orqali yangilanadi;
-#    frontend STATIK fayl - CI'da qurilib, rsync qilinadi.
-# 3) job'ning name: maydonidan; o'zgartirilsa, eski qoida hech qachon
-#    mos kelmay, PR abadiy "kutilmoqda" holatida qoladi.
-# 4) Composite action - step darajasida (bitta job ichida); reusable
-#    workflow - butun job(lar) darajasida, o'z runner'i bilan.
-# 5) Ishonchsiz tashqi PR kodi runner tarmog'ida bajarilishi mumkin.
-# 6) SSH kaliti noto'g'ri/eskirgan yoki authorized_keys yangilanmagan.
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend_changed: ${{ steps.filter.outputs.backend }}
+      frontend_changed: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+
+  test-backend:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend_changed == 'true'
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Faqat backend/ o'zgarganda, faqat shu versiyada test"
+# Bu - 1-darsdagi paths (faqat o'zgargan qismni aniqlash) va 3-darsdagi
+# matrix (bir nechta versiyada test)ning MONOREPO SHAROITIDA birlashuvi -
+# 112-kurs 11-darsidagi sparse-checkout g'oyasining CI strategiyasidagi
+# ekvivalenti: "faqat kerakli qismga e'tibor qaratish".
