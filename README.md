@@ -1,66 +1,118 @@
 # ============================================================
-# 1) Branch protection qoidasini GitHub CLI orqali o'rnatish
-#    (test.yml'ning HAQIQIY job nomlari bilan)
+# 1) Composite action: test.yml'ning backend sozlash qismini o'rash
 # ============================================================
-$ gh api repos/{owner}/{repo}/branches/master/protection \
-  --method PUT \
-  --field required_status_checks='{"strict":true,"contexts":["Backend (pytest)","Frontend (Jest)"]}' \
-  --field enforce_admins=true \
-  --field required_pull_request_reviews='{"required_approving_review_count":1}' \
-  --field restrictions=null
-# required_status_checks.strict: true - bu "Require branches to be up
-# to date before merging" ga mos keladi.
-# contexts - test.yml'dagi job "name:" maydonlaridan OLINGAN ANIQ matn -
-# nomi bir harf farq qilsa ham, GitHub qoidani mos kelmagan deb hisoblaydi.
+# .github/actions/setup-backend/action.yml
+name: 'Setup Backend'
+description: 'Checkout + Python + bog\'liqliklarni o\'rnatish'
+inputs:
+  python-version:
+    description: 'Python versiyasi'
+    required: false
+    default: '3.11'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: backend/requirements.txt
+    - name: Install dependencies
+      shell: bash
+      working-directory: backend
+      run: pip install -r requirements.txt
+# Composite action ICHIDA "shell: bash" har bir run: step'i uchun ANIQ
+# ko'rsatilishi SHART - oddiy workflow'dan farqli, bu yerda standart
+# shell avtomatik tanlanmaydi.
 
 # ============================================================
-# 2) .github/CODEOWNERS - muayyan yo'llar uchun majburiy tekshiruvchi
+# 2) Composite action'ni test.yml ichida chaqirish
 # ============================================================
-# Global standart - reponing istalgan qismi uchun
-* @backend-team-lead
-
-# Backend model o'zgarishlari - faqat bazaviy tuzilishni biladigan odam
-/backend/app/models/ @db-schema-owner
-
-# Deploy workflow'lari - faqat DevOps mas'uli
-/.github/workflows/deploy-*.yml @devops-lead
-
-# Frontend komponentlar - frontend jamoasi
-/frontend/src/components/ @frontend-team
-
-# ============================================================
-# 3) required_status_checks kontekstini test.yml'dan aniq olish
-# ============================================================
-# test.yml'dagi:
-#   backend:
-#     name: Backend (pytest)     <- bu "context" nomi
-#   frontend:
-#     name: Frontend (Jest)      <- bu ham "context" nomi
-#
-# Branch protection sozlamasida ANIQ shu ikki nom kiritilishi kerak -
-# agar "name:" o'zgartirilsa (masalan "Backend Tests" deb), eski qoidada
-# saqlangan "Backend (pytest)" endi HECH QACHON topilmaydi, va PR
-# ABADIY "kutilmoqda" holatida qolib ketadi (bu keng tarqalgan xato -
-# 11-darsda batafsil ko'ramiz).
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-backend    # <- BITTA qatorda
+        with:                                     #    ikkita step o'rniga
+          python-version: "3.11"
+      - name: Run tests
+        working-directory: backend
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./test.db
+          SECRET_KEY: test-secret-key-for-ci-only-not-used-in-prod
+        run: python -m pytest tests/ -v --tb=short
 
 # ============================================================
-# 4) Rebase talab qilinishi - 112-kurs bilimi amaliyotda
+# 3) Reusable workflow: butun backend test job'ini funksiya qilish
 # ============================================================
-$ git fetch origin
-$ git rebase origin/master
-# Agar "Require branches to be up to date" yoqilgan bo'lsa, GitHub
-# feature branch'ni PR oynasida "This branch is out-of-date with the
-# base branch" deb ko'rsatadi - "Update branch" tugmasi (yoki qo'lda
-# rebase) bosilmaguncha, hatto testlar avval o'tgan bo'lsa ham, Merge
-# tugmasi ishlamaydi.
+# .github/workflows/_reusable-backend-test.yml
+name: Reusable Backend Test
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.11"
+    secrets:
+      db-url:
+        required: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - working-directory: backend
+        run: pip install -r requirements.txt
+      - working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.db-url || 'sqlite+aiosqlite:///./test.db' }}
+          SECRET_KEY: test-secret-key-for-ci-only-not-used-in-prod
+        run: python -m pytest tests/ -v --tb=short
 
 # ============================================================
-# 5) Bypass qilishni butunlay o'chirish (eng qattiq siyosat)
+# 4) Reusable workflow'ni chaqiruvchi fayl
 # ============================================================
-$ gh api repos/{owner}/{repo}/branches/master/protection \
-  --method PUT \
-  --field enforce_admins=true
-# enforce_admins: true - "Do not allow bypassing the above settings"ga
-# mos keladi. Bu yoqilgach, repo egasi HAM qoidalarni chetlab o'ta
-# olmaydi - favqulodda holatda ham avval qoidani VAQTINCHA o'chirish
-# kerak bo'ladi, bu esa qasddan qiyinlashtirilgan (audit uchun).
+# .github/workflows/test.yml (yangi versiya, reusable bilan)
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [master]
+
+jobs:
+  backend:
+    uses: ./.github/workflows/_reusable-backend-test.yml
+    with:
+      python-version: "3.11"
+    secrets: inherit    # <- barcha secret'larni avtomatik uzatish
+
+  frontend:
+    name: Frontend (Jest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - working-directory: frontend
+        env:
+          CI: "true"
+        run: npx react-scripts test --watchAll=false --passWithNoTests
+# Diqqat: reusable workflow chaqirilganda "backend" job'i endi
+# `uses:` bilan yoziladi, "runs-on:"/"steps:" YO'Q - bular
+# _reusable-backend-test.yml ICHIDA yashiringan.
