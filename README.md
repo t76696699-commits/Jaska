@@ -1,117 +1,166 @@
 # ============================================================
-# 1) deploy-frontend.yml'ning haqiqiy verifikatsiya step'i
-#    (artifact ISHLATILMAYDI, chunki bitta job ichida ketma-ket)
+# 1) deploy-backend.yml - to'liq, real fayl
 # ============================================================
-- name: Build production bundle
-  working-directory: frontend
-  env:
-    REACT_APP_API_URL: https://tech.gennis.uz/
-    CI: 'false'
-    NODE_OPTIONS: --max-old-space-size=4096
-    GENERATE_SOURCEMAP: 'false'
-  run: npm run build
+name: Deploy Backend
 
-- name: Verify build artefact
-  run: |
-    test -f frontend/build/index.html || { echo "::error::build/index.html missing — aborting deploy"; exit 1; }
-    echo "Build size:"
-    du -sh frontend/build
-    ls -la frontend/build
+on:
+  push:
+    branches: [server]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
 
-- name: Rsync build to prod
-  env:
-    SSH_HOST: ${{ secrets.SSH_HOST }}
-    SSH_USER: ${{ secrets.SSH_USER }}
-    SSH_PORT: ${{ secrets.SSH_PORT }}
-  run: |
-    PORT="${SSH_PORT:-22}"
-    rsync -avz --delete \
-      -e "ssh -i ~/.ssh/deploy_key -p $PORT -o StrictHostKeyChecking=yes" \
-      frontend/build/ \
-      "$SSH_USER@$SSH_HOST:/var/www/tech_gennis/frontend/build/"
-# Bitta job ichida: build -> verify -> rsync. Artifact YO'Q, chunki
-# hammasi bitta runner faylizmida, ketma-ket.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
 
-# ============================================================
-# 2) Agar build va deploy IKKI job'ga bo'linsa - artifact KERAK bo'ladi
-# ============================================================
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - working-directory: frontend
-        run: npm ci --no-audit --no-fund
-      - working-directory: frontend
-        env:
-          REACT_APP_API_URL: https://tech.gennis.uz/
-          CI: 'false'
-          GENERATE_SOURCEMAP: 'false'
-        run: npm run build
-      - name: Verify build artefact
-        run: test -f frontend/build/index.html || { echo "::error::missing"; exit 1; }
-
-      # <- YANGI qadam: build natijasini artifact sifatida yuklash
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-build
-          path: frontend/build/
-          retention-days: 1
-
   deploy:
-    needs: build          # <- deploy job build job tugashini kutadi
+    name: Pull & restart backend
     runs-on: ubuntu-latest
-    steps:
-      # <- YANGI qadam: build job'ining artifact'ini shu job'ga tiklash
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-build
-          path: frontend/build/
+    timeout-minutes: 15
 
+    steps:
       - name: Configure SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_HOST:        ${{ secrets.SSH_HOST }}
+          SSH_PORT:        ${{ secrets.SSH_PORT }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          PORT="${SSH_PORT:-22}"
+          ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Pull latest code and restart service
+        env:
+          SSH_HOST:     ${{ secrets.SSH_HOST }}
+          SSH_USER:     ${{ secrets.SSH_USER }}
+          SSH_PORT:     ${{ secrets.SSH_PORT }}
+          BACKEND_DIR:  ${{ secrets.BACKEND_DIR }}
+          SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
+        run: |
+          PORT="${SSH_PORT:-22}"
+          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=yes \
+              "$SSH_USER@$SSH_HOST" \
+              "set -e
+               git -C \"$BACKEND_DIR\" pull origin server
+               cd \"$BACKEND_DIR\"
+               source venv/bin/activate
+               pip install -r requirements.txt --quiet
+               systemctl restart \"$SERVICE_NAME\"
+               systemctl is-active --quiet \"$SERVICE_NAME\" && echo 'Service is running' || { echo 'Service failed to start'; systemctl status \"$SERVICE_NAME\" --no-pager; exit 1; }"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+# ============================================================
+# 2) deploy-frontend.yml - to'liq, real fayl
+# ============================================================
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [server]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build production bundle
+        working-directory: frontend
+        env:
+          REACT_APP_API_URL: https://tech.gennis.uz/
+          CI: 'false'
+          NODE_OPTIONS: --max-old-space-size=4096
+          GENERATE_SOURCEMAP: 'false'
+        run: npm run build
+
+      - name: Verify build artefact
+        run: |
+          test -f frontend/build/index.html || { echo "::error::build/index.html missing — aborting deploy"; exit 1; }
+          echo "Build size:"
+          du -sh frontend/build
+          ls -la frontend/build
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST:        ${{ secrets.SSH_HOST }}
+          SSH_PORT:        ${{ secrets.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          PORT="${SSH_PORT:-22}"
+          ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
 
       - name: Rsync build to prod
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
+          PORT="${SSH_PORT:-22}"
           rsync -avz --delete \
-            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes" \
-            frontend/build/ "$SSH_USER@$SSH_HOST:/var/www/tech_gennis/frontend/build/"
-# needs: build - artifact tayyor bo'lguncha deploy BOSHLANMAYDI.
-# Bu ikki job'li bo'linish foydali: masalan, "build" job'ini alohida
-# saqlab, bir necha marta "deploy"ni QAYTA ishga tushirish mumkin (11-dars
-# - re-run) - build'ni har safar QAYTA yig'ish shart emas.
+            -e "ssh -i ~/.ssh/deploy_key -p $PORT -o StrictHostKeyChecking=yes" \
+            frontend/build/ \
+            "$SSH_USER@$SSH_HOST:/var/www/tech_gennis/frontend/build/"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
 
 # ============================================================
-# 3) Test hisobotini artifact sifatida saqlash (pytest bilan)
+# 3) Nima uchun rsync'dagi oxirgi slash MUHIM (amaliy tajriba)
 # ============================================================
-- name: Run tests with report
-  working-directory: backend
-  run: python -m pytest tests/ -v --tb=short --junitxml=test-report.xml
+# TO'G'RI (slash BILAN manba yo'lida):
+#   rsync frontend/build/ user@host:/var/www/site/build/
+#   -> /var/www/site/build/index.html  (TO'G'RI)
+#
+# NOTO'G'RI (slashSIZ):
+#   rsync frontend/build user@host:/var/www/site/build/
+#   -> /var/www/site/build/build/index.html  (ICHMA-ICH, NOTO'G'RI!)
+#   Sayt "404 Not Found" beradi, chunki server index.html'ni
+#   /var/www/site/build/ ichida emas, build/build/ ichida qidiradi.
 
-- name: Upload test report
-  if: always()          # <- testlar MUVAFFAQIYATSIZ bo'lsa ham hisobot saqlansin
-  uses: actions/upload-artifact@v4
-  with:
-    name: pytest-report
-    path: backend/test-report.xml
-    retention-days: 14
-# if: always() - test.yml'dagi "Cleanup SSH key" step'idagi bilan bir xil
-# naqsh (2-dars): hisobot HAR DOIM saqlanishi kerak, test o'tdimi
-# yoki yo'qmi - ayniqsa muvaffaqiyatsizlikni keyinroq tahlil qilish uchun.
+# ============================================================
+# 4) systemctl tekshiruvining ahamiyati - deploy "muvaffaqiyatli"
+#    signalini yolg'ondan bermaslik
+# ============================================================
+$ systemctl restart student-platform-backend
+$ systemctl is-active --quiet student-platform-backend && echo OK || echo FAIL
+# Agar restart buyrug'i "muvaffaqiyatli" qaytsa-yu, lekin xizmat DARHOL
+# yiqilib qolsa (masalan .env faylida SECRET_KEY yo'q bo'lsa), shu
+# tekshiruvsiz workflow baribir "yashil" bo'lib qolardi - eng xavfli
+# yolg'on signal turi.
