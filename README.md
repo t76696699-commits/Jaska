@@ -1,80 +1,46 @@
 # ============================================================
-# git log --oneline -40'dan haqiqiy misollar (bu repozitoriyaning
-# o'z tarixi) - Conventional Commits formatini tahlil qilamiz
+# Review checklist - real PR uchun to'rt ustuvorlik bo'yicha
+# tekshiruv (bu platformaning e6c19f2 xatosi misolida)
 # ============================================================
 
-REAL_COMMITS = [
-    "feat(scripts): add reusable course_builder library + generic scripts",
-    "fix(lessons): make in-lesson exercise hydration language-aware",
-    "chore(scripts): add exercise-integrity and course-image checkers",
-    "fix(points): stop permanently inflating lifetime_points/leaderboard on reversal",
-    "feat(team-game): notify parent bot on session complete + public snapshot endpoints",
-    "fix(dictionary): stop leaking the answer word and fix RU definition gen",
-    "refactor(fonts): normalize CSS to --font-ui / --font-mono tokens",
-    "debug: log openai url and error body in ai chain",   # <- standart TUR emas!
-]
-
-import re
-
-# type(scope): description  yoki  type: description
-CONVENTIONAL_PATTERN = re.compile(
-    r"^(feat|fix|refactor|docs|test|chore|perf|ci|style|build|revert)"
-    r"(\([a-z0-9_-]+\))?: .+"
-)
-
-STANDARD_TYPES = {
-    "feat", "fix", "refactor", "docs", "test",
-    "chore", "perf", "ci", "style", "build", "revert",
+REVIEW_CHECKLIST = {
+    "1_correctness": [
+        "Chekka holatlar (bo'sh, None, 0, juda katta qiymat) ko'rib chiqilganmi?",
+        "Taxmin (masalan 'har doim vergul bo'yicha bo'linadi') HAR DOIM to'g'rimi,"
+        " yoki faqat ba'zi holatlarda?",
+        "Race condition (bir vaqtda ikki so'rov) bo'lishi mumkinmi?",
+    ],
+    "2_security": [
+        "Foydalanuvchi kiritgan ma'lumot to'g'ridan-to'g'ri SQL/shell buyrug'iga qo'shilmayaptimi?",
+        "Maxfiy kalit (API key, parol) kodda qattiq yozilmaganmi?",
+        "Foydalanuvchi HTML'i tozalanmasdan chiqarilmayaptimi (XSS)?",
+    ],
+    "3_tests": [
+        "Yangi xatti-harakat uchun test bormi?",
+        "Test faqat 'muvaffaqiyatli' holatni emas, chekka holatni ham tekshiradimi?",
+        "Agar bu funksiya buzilsa, test buni ushlab qoladimi?",
+    ],
+    "4_readability": [
+        "O'zgaruvchi va funksiya nomlari mazmunga mos keladimi?",
+        "Funksiya bir vaqtning o'zida bir nechta ishni qilmayaptimi?",
+        "(BU band uslub emas - agar faqat qavs/bo'sh joy bo'lsa, nit: bilan belgilang)",
+    ],
 }
 
-for msg in REAL_COMMITS:
-    match = CONVENTIONAL_PATTERN.match(msg)
-    type_part = msg.split(":")[0].split("(")[0]
-    is_standard = type_part in STANDARD_TYPES
-    print(f"{'OK ' if match and is_standard else 'DIQQAT'}  {msg}")
 
-# Natija:
-# OK      feat(scripts): add reusable course_builder library ...
-# OK      fix(lessons): make in-lesson exercise hydration ...
-# OK      chore(scripts): add exercise-integrity ...
-# OK      fix(points): stop permanently inflating ...
-# OK      feat(team-game): notify parent bot ...
-# OK      fix(dictionary): stop leaking ...
-# OK      refactor(fonts): normalize CSS ...
-# DIQQAT  debug: log openai url and error body in ai chain
-#         ^ "debug" standart tur emas - review'da savol tug'dirishi mumkin edi
+def review_pr(diff_summary: dict) -> str:
+    """Sodda simulyatsiya: birinchi uchta band bo'yicha muammo topilsa,
+    PR bloklanadi; to'rtinchisi faqat nit: sifatida qoldiriladi."""
+    for priority in ("1_correctness", "2_security", "3_tests"):
+        if diff_summary.get(priority) is False:
+            return f"Changes requested - {priority} bo'yicha muammo bor"
+    if diff_summary.get("4_readability") is False:
+        return "Approved (nit: readability bo'yicha ixtiyoriy izoh qoldirildi)"
+    return "Approved"
 
 
-# ============================================================
-# Bu repozitoriyaning so'nggi 300 commit'ini turi bo'yicha
-# guruhlash (git log --oneline -300'dan olingan real taqsimot)
-# ============================================================
-from collections import Counter
-
-# git log --oneline -300 | grep -oE '^[a-z]+' natijasining qisqartirilgan
-# ko'rinishi - bu son real repozitoriyadan olingan (taxminiy taqsimot)
-REAL_TYPE_COUNTS = Counter({
-    "fix": 34,       # scope'siz "fix:" + scope'li "fix(...)"
-    "feat": 17,
-    "refactor": 3,
-    "chore": 3,
-    "test": 2,
-    "ci": 1,
-    "debug": 1,      # <- standart emas
-})
-
-
-def summarize_history(counts: Counter) -> None:
-    total = sum(counts.values())
-    for commit_type, count in counts.most_common():
-        flag = "" if commit_type in STANDARD_TYPES else "  <- standart emas!"
-        pct = count / total * 100
-        print(f"{commit_type:>10}: {count:>3} ta ({pct:4.1f}%){flag}")
-
-
-summarize_history(REAL_TYPE_COUNTS)
-# fix eng ko'p uchraydigan tur ekani - bu odatiy holat: aksariyat
-# kunlik ish bug tuzatishlardan iborat, feat kamroq (yangi funksiya
-# kamroq tez-tez qo'shiladi), va debug kabi standart bo'lmagan tur
-# JUDA kam (1 ta, 300 tadan) - bu izchillik odatda YAXSHI saqlanganini
-# ko'rsatadi, lekin nol emasligini ham.
+# e6c19f2'dagi grading bug'i review qilinganda TO'G'RILIK bandida
+# aniqlanishi kerak edi:
+example_diff = {"1_correctness": False, "2_security": True, "3_tests": True, "4_readability": True}
+print(review_pr(example_diff))
+# Natija: "Changes requested - 1_correctness bo'yicha muammo bor"
