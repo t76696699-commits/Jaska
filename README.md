@@ -1,42 +1,52 @@
 # ============================================================
-# Real misol: e6c19f2 commit tavsifidan (bu platformaning o'z
-# git tarixi) - review nimani ushlab qolishi mumkin edi
+# Bitta o'zgarish (2096b0e), ikki tavsif - solishtiring
 # ============================================================
 
-# --- MUAMMOLI KOD (merge qilingunga qadar hech kim savol bermagan) ---
-def check_multiple_choice(exercise, student_answer):
-    correct = exercise.correct_answers          # masalan: "Konsolga chiqaradi, aniq"
-    correct_list = correct.split(",")           # <- HAR DOIM vergul bo'yicha boladi
-    student_list = student_answer.split(",")
-    return set(correct_list) == set(student_list)
+# --- HAQIQIY TAVSIF (bu repozitoriyaning o'z commit tarixidan) ---
+REAL_DESCRIPTION = """
+feat(scripts): add reusable course_builder library + generic scripts
 
-# Agar to'g'ri javob matnining o'zida vergul bo'lsa (yuqoridagi misolda
-# "Konsolga chiqaradi, aniq"), u ikkita bo'lakka bo'linadi:
-#   ["Konsolga chiqaradi", " aniq"]
-# Talaba xuddi shu variantni TO'LIQ tanlagan bo'lsa ham (bitta string
-# sifatida), taqqoslash hech qachon mos kelmaydi - javob DOIM "noto'g'ri"
-# deb belgilanadi, talaba nima tanlashidan qat'i nazar.
+Replaces the "copy a 2,000+ line seed script per course" pattern with a
+shared library plus small, generic, per-concern scripts driven by a
+course spec module (pure data - no DB code):
 
-# --- TUZATILGAN KOD (commit e6c19f2'dan keyin) ---
-def check_multiple_choice_fixed(exercise, student_answer):
-    if exercise.is_multiple_select:
-        correct_list = exercise.correct_answers.split(",")
-        student_list = student_answer.split(",")
-        return set(correct_list) == set(student_list)
-    # Bitta tanlovli savolda MATNNI BUTUNLIGICHA solishtiramiz,
-    # ichidagi vergulga qaramasdan
-    return exercise.correct_answers.strip() == student_answer.strip()
+  create_course.py       - Course row (idempotent by title)
+  create_lessons.py      - Lesson rows (idempotent by course_id+order)
+  create_exercises.py    - Exercise rows + sections_json exercise stubs
+  create_samples.py      - LessonSample rows (namuna)
+  set_submission_tasks.py - UPDATE task_* columns (not a separate table)
+  translate_lessons_ru.py / translate_exercises_ru.py - RU content
+  build_course.py         - runs all of the above in the correct order,
+                            then check_exercise_integrity + check_ru_coverage
+
+Exercises are stored in sections_json as bare {"id": N} stubs rather than
+full snapshots: a full embed is a frozen copy that silently goes stale,
+a stub is always hydrated fresh at request time.
+
+Verified end-to-end via build_course.py against production (committed,
+checked, then cleaned up).
+"""
+
+# --- ZAIFLASHTIRILGAN TAVSIF (HAQIQIY EMAS - faqat solishtirish uchun,
+#     xuddi shu o'zgarish uchun ko'p ko'riladigan zaif variant) ---
+WEAK_DESCRIPTION = """
+refactor: update course scripts
+
+Cleaned up the scripts folder a bit. Added some new files for building
+courses. Should work now.
+"""
 
 # ============================================================
-# Review paytida so'ralishi kerak bo'lgan savol (agar berilganida,
-# bu xato ishlab chiqarishga yetib bormagan bo'lardi):
+# Reviewer nuqtai nazaridan farq:
 #
-#   "correct_answers'ni vergul bo'yicha bo'lish nafaqat ko'p
-#    tanlovli (is_multiple_select=True), balki BARCHA holatlar
-#    uchun to'g'rimi? Bitta tanlovli javob matnida vergul bo'lsa
-#    nima bo'ladi?"
+# REAL_DESCRIPTION o'qigandan keyin reviewer BILADI: (1) qanday muammo
+# hal qilinmoqda (2000+ qatorli nusxalash), (2) qaysi fayllar qo'shilgan
+# va har biri nima qiladi, (3) NEGA stub yondashuvi tanlangan (frozen
+# copy emas, har doim yangi hydrate), (4) qanday tasdiqlangan (production
+# build orqali).
 #
-# Bu savol CI (test.yml) tomonidan AVTOMATIK berilmaydi - faqat
-# mavjud testlar tekshirgan holatlarni tasdiqlaydi. Yangi chekka
-# holatni o'ylab topish - aynan inson review'ining vazifasi.
+# WEAK_DESCRIPTION o'qigandan keyin reviewer HECH NARSA bilmaydi: "bir
+# oz" tozalangan - qancha? "ba'zi" fayllar - qaysi va nima uchun? "ishlashi
+# kerak" - qanday tekshirilgan, umuman tekshirilganmi? Reviewer endi BUTUN
+# diff'ni o'zi, hech qanday yo'l-yo'riqsiz o'qib chiqishga majbur.
 # ============================================================
