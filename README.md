@@ -1,67 +1,55 @@
 # ============================================================
-# Vague vs actionable izoh - bir xil xato uchun ikki xil yozuv
+# Capstone: 112 + bu kurs + 117 - to'liq zanjirni ko'rsatuvchi
+# skript (kontseptual - real repo'da qo'llash uchun)
 # ============================================================
 
-CODE_UNDER_REVIEW = """
-def get_first_answer(student_answer):
-    return student_answer.split(",")[0]
+# --- Vazifa 1: to'liq zanjir (bu kursning o'z darslari) ---
+ATOMIC_COMMITS = [
+    "fix(scoring): guard multiple_choice grading against comma-containing answers",
+    "test(scoring): add regression test for comma-in-answer edge case",
+]
+PR_DESCRIPTION_SECTIONS = ["Kontekst", "Nima o'zgardi", "Nega aynan shu yechim", "Qanday tekshirish mumkin"]
+MERGE_STRATEGY = "squash"          # 8-dars
+VERSION_BUMP = ("1.0.0", "patch", "1.0.1")   # 9-dars
+CHANGELOG_SECTION = "Fixed"        # 10-dars
+RELEASE_TAG = "v1.0.1"             # 11-dars (annotated)
+
+# --- Vazifa 2: bisect + atomik commit madaniyati (112-kurs) ---
+# $ git bisect start
+# $ git bisect bad HEAD
+# $ git bisect good v1.0.0
+# Git avtomatik oraliq commit'larni taklif qiladi; har birida:
+# $ pytest tests/test_scoring.py -k comma_edge_case
+# $ git bisect good   # yoki bad
+# Natijada: "abc1234 is the first bad commit" - ANIQ bitta atomik
+# commit ko'rsatiladi, aralash commit bo'lganida bu ANIQLIK yo'qolardi.
+
+# --- Vazifa 3: uch qatlamli himoya ---
+LOCAL_PRE_COMMIT_HOOK = "black --check backend/ && ruff check backend/"
+CI_JOB_SAME_CHECK = """
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install black ruff
+      - run: black --check backend/ && ruff check backend/
+"""
+BRANCH_PROTECTION_REQUIRED_CHECK = "lint"   # 117-kurs: required status check nomi
+
+# --- Vazifa 4: reliz tegini CI trigger'iga ulash (117-kurs) ---
+RELEASE_TRIGGER_YAML = """
+on:
+  push:
+    tags:
+      - 'v*.*.*'
 """
 
-# --- VAGUE (noaniq) izoh ---
-VAGUE_COMMENT = "Bu funksiya yaxshi emas."
-
-# --- ACTIONABLE (aniq) izoh: NIMA + NEGA + NIMA QILISH ---
-ACTIONABLE_COMMENT = """
-get_first_answer bo'sh string (student_answer = "") kelsa
-IndexError beradi, chunki split(",") natijasi [""] bo'ladi, lekin
-[0] baribir ishlaydi - aslida muammo student_answer=None kelganda:
-None.split() AttributeError beradi.
-
-Taklif:
-    def get_first_answer(student_answer):
-        if not student_answer:
-            return ""
-        return student_answer.split(",")[0]
-"""
-
-# --- nit: prefiksi bilan bloklamaydigan izoh ---
-NIT_COMMENT = "nit: `get_first_answer` o'rniga `get_first_selected_option` " \
-              "nomi maqsadni aniqroq ifodalaydi (bloklamaydi, ixtiyoriy)."
-
-# --- Ijobiy izoh (mustahkamlash) ---
-POSITIVE_COMMENT = "Bu yerda `is_multiple_select` tekshiruvi chiroyli - " \
-                    "chekka holatni aniq ajratgan."
-
-print("=== Vague ===")
-print(VAGUE_COMMENT)
-print("\n=== Actionable ===")
-print(ACTIONABLE_COMMENT)
-print("\n=== Nit (bloklamaydi) ===")
-print(NIT_COMMENT)
-print("\n=== Ijobiy ===")
-print(POSITIVE_COMMENT)
-
-
-# ============================================================
-# Izohni avtomatik "sifat darajasi"ga baholovchi sodda tekshiruv -
-# uch mezon: aniq qator/holat, sabab, va ohang
-# ============================================================
-import re
-
-
-def score_comment_quality(comment: str) -> dict:
-    """Juda sodda evristika - real jamoada bu inson qarori, lekin
-    asosiy signal turlarini ko'rsatish uchun foydali."""
-    has_specific_reference = bool(re.search(r"\d+-qator|`\w+`", comment))
-    has_reasoning = any(word in comment.lower() for word in ["chunki", "sabab", "agar"])
-    is_harsh = any(word in comment.lower() for word in ["yomon", "yoqmadi"])
-    return {
-        "aniq_qatorga_ishora": has_specific_reference,
-        "sabab_tushuntirilgan": has_reasoning,
-        "keskin_ohang": is_harsh,
-        "actionable_hisoblanadimi": has_specific_reference and has_reasoning and not is_harsh,
-    }
-
-
-for label, comment in [("Vague", VAGUE_COMMENT), ("Actionable", ACTIONABLE_COMMENT)]:
-    print(f"\n{label}: {score_comment_quality(comment)}")
+print("=== Capstone zanjiri ===")
+print("1) Atomik commit'lar:", ATOMIC_COMMITS)
+print("2) PR bo'limlari:", PR_DESCRIPTION_SECTIONS)
+print("3) Merge strategiyasi:", MERGE_STRATEGY)
+print("4) Versiya:", VERSION_BUMP)
+print("5) Changelog bo'limi:", CHANGELOG_SECTION)
+print("6) Reliz tegi:", RELEASE_TAG)
+print("7) Required CI check (117-kurs):", BRANCH_PROTECTION_REQUIRED_CHECK)
+print("8) Reliz trigger (117-kurs):", RELEASE_TRIGGER_YAML)
