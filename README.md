@@ -1,55 +1,76 @@
 # ============================================================
-# Capstone: 112 + bu kurs + 117 - to'liq zanjirni ko'rsatuvchi
-# skript (kontseptual - real repo'da qo'llash uchun)
+# Bot API (aiogram) vs MTProto (Telethon) -- bir vazifa, ikki yondashuv
 # ============================================================
 
-# --- Vazifa 1: to'liq zanjir (bu kursning o'z darslari) ---
-ATOMIC_COMMITS = [
-    "fix(scoring): guard multiple_choice grading against comma-containing answers",
-    "test(scoring): add regression test for comma-in-answer edge case",
-]
-PR_DESCRIPTION_SECTIONS = ["Kontekst", "Nima o'zgardi", "Nega aynan shu yechim", "Qanday tekshirish mumkin"]
-MERGE_STRATEGY = "squash"          # 8-dars
-VERSION_BUMP = ("1.0.0", "patch", "1.0.1")   # 9-dars
-CHANGELOG_SECTION = "Fixed"        # 10-dars
-RELEASE_TAG = "v1.0.1"             # 11-dars (annotated)
+# --- 1) aiogram (Bot API) -- 48-kursdan tanish shakl -----------------
+from aiogram import Bot, Dispatcher, Router
+from aiogram.filters import Command
+from aiogram.types import Message
 
-# --- Vazifa 2: bisect + atomik commit madaniyati (112-kurs) ---
-# $ git bisect start
-# $ git bisect bad HEAD
-# $ git bisect good v1.0.0
-# Git avtomatik oraliq commit'larni taklif qiladi; har birida:
-# $ pytest tests/test_scoring.py -k comma_edge_case
-# $ git bisect good   # yoki bad
-# Natijada: "abc1234 is the first bad commit" - ANIQ bitta atomik
-# commit ko'rsatiladi, aralash commit bo'lganida bu ANIQLIK yo'qolardi.
+bot = Bot(token="123456:BOT_TOKEN")          # bot HISOBINI aniqlaydi
+dp = Dispatcher()
+router = Router()
 
-# --- Vazifa 3: uch qatlamli himoya ---
-LOCAL_PRE_COMMIT_HOOK = "black --check backend/ && ruff check backend/"
-CI_JOB_SAME_CHECK = """
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: pip install black ruff
-      - run: black --check backend/ && ruff check backend/
-"""
-BRANCH_PROTECTION_REQUIRED_CHECK = "lint"   # 117-kurs: required status check nomi
 
-# --- Vazifa 4: reliz tegini CI trigger'iga ulash (117-kurs) ---
-RELEASE_TRIGGER_YAML = """
-on:
-  push:
-    tags:
-      - 'v*.*.*'
-"""
+@router.message(Command("ping"))
+async def aiogram_ping(message: Message) -> None:
+    # Bu handler faqat botga yuborilgan /ping buyrug'iga javob beradi.
+    # Bot faqat: (a) unga yuborilgan, (b) u qo'shilgan guruhdagi
+    # xabarlarni ko'radi -- guruhning eski tarixini o'qiy olmaydi.
+    await message.answer("pong (Bot API orqali)")
 
-print("=== Capstone zanjiri ===")
-print("1) Atomik commit'lar:", ATOMIC_COMMITS)
-print("2) PR bo'limlari:", PR_DESCRIPTION_SECTIONS)
-print("3) Merge strategiyasi:", MERGE_STRATEGY)
-print("4) Versiya:", VERSION_BUMP)
-print("5) Changelog bo'limi:", CHANGELOG_SECTION)
-print("6) Reliz tegi:", RELEASE_TAG)
-print("7) Required CI check (117-kurs):", BRANCH_PROTECTION_REQUIRED_CHECK)
-print("8) Reliz trigger (117-kurs):", RELEASE_TRIGGER_YAML)
+
+dp.include_router(router)
+# asyncio.run(dp.start_polling(bot))
+
+
+# --- 2) Telethon (MTProto) -- shu kursning shakli --------------------
+from telethon import TelegramClient, events
+
+api_id = 123456          # my.telegram.org'dan -- ILOVANI aniqlaydi
+api_hash = "abcdef0123456789abcdef0123456789"
+
+# "session_name" -- diskdagi session fayl nomi (2-darsda batafsil).
+# Birinchi ishga tushirishda telefon raqami + kod so'raladi -- shundan
+# keyin bu HAQIQIY FOYDALANUVCHI HISOBI nomidan ishlaydigan client.
+client = TelegramClient("session_name", api_id, api_hash)
+
+
+@client.on(events.NewMessage(pattern="/ping"))
+async def telethon_ping(event: events.NewMessage.Event) -> None:
+    # Bu handler HAR QANDAY chatda ishlaydi -- shaxsiy, guruh, kanal --
+    # chunki bu endi "botga kelgan update" emas, balki "hisobim
+    # ishtirok etayotgan har qanday suhbatdagi yangi xabar" hodisasi.
+    await event.reply("pong (Telethon/MTProto orqali)")
+
+
+# with client:
+#     client.run_until_disconnected()
+
+
+# --- 3) Imkoniyatlar solishtiruvi -- shu darsning asosiy xulosasi ----
+BOT_API_CAPABILITIES = {
+    "faqat o'ziga tegishli xabarlarni ko'radi": True,
+    "guruhning eski tarixini o'qiydi (admin bo'lmasa)": False,
+    "username orqali kanalga o'zi qo'shiladi": False,
+    "kontaktlar/dialoglar ro'yxatiga kiradi": False,
+    "odam sifatida ko'rinadi (Bot belgisisiz)": False,
+}
+
+USERBOT_CAPABILITIES = {
+    "faqat o'ziga tegishli xabarlarni ko'radi": False,  # barchasini ko'radi
+    "guruhning eski tarixini o'qiydi (admin bo'lmasa)": True,
+    "username orqali kanalga o'zi qo'shiladi": True,
+    "kontaktlar/dialoglar ro'yxatiga kiradi": True,
+    "odam sifatida ko'rinadi (Bot belgisisiz)": True,
+}
+
+
+def print_comparison() -> None:
+    print(f"{'Imkoniyat':<55}{'Bot API':>10}{'Userbot':>10}")
+    for key in BOT_API_CAPABILITIES:
+        print(f"{key:<55}{str(BOT_API_CAPABILITIES[key]):>10}{str(USERBOT_CAPABILITIES[key]):>10}")
+
+
+if __name__ == "__main__":
+    print_comparison()
