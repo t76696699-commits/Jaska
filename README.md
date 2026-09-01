@@ -1,58 +1,67 @@
-from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import Message, LabeledPrice
-from sqlalchemy.exc import IntegrityError
+# test_handlers.py -- hendlerlarni yupqa qilib, biznes-mantiqni alohida testlash
+from datetime import datetime
+from unittest.mock import AsyncMock
+
+import pytest
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.types import Chat, Message, Update, User
 
 router = Router()
 
 
-@router.message(F.successful_payment)
-async def handle_successful_payment(message: Message, db_session):
-    payment = message.successful_payment
-
-    try:
-        await save_payment_record(
-            db_session,
-            charge_id=payment.telegram_payment_charge_id,
-            invoice_payload=payment.invoice_payload,
-            amount=payment.total_amount,
-            currency=payment.currency,
-        )
-    except IntegrityError:
-        # charge_id UNIQUE ustunga to'qnashdi — bu update allaqachon qayta ishlangan,
-        # xizmatni ikkinchi marta bermaslik uchun shu yerda to'xtaymiz
-        await db_session.rollback()
-        return
-
-    _, product_id, user_id = payment.invoice_payload.split(":")
-    await grant_access(db_session, user_id=int(user_id), product_id=int(product_id))
-    await message.answer("To'lovingiz uchun rahmat! Xizmat faollashtirildi.")
+# ---- 1) Sof biznes-mantiq -- aiogram'ga bog'liq emas, oddiy funksiya ----
+def format_greeting(first_name: str) -> str:
+    return f"Salom, {first_name}! Botga xush kelibsiz."
 
 
-async def save_payment_record(db_session, *, charge_id: str, invoice_payload: str, amount: int, currency: str):
-    ...  # INSERT ... charge_id UNIQUE bo'lgan jadvalga
+# ---- 2) Yupqa handler -- faqat o'qiydi, chaqiradi, javob beradi ----
+@router.message(F.text == "/start")
+async def start_handler(message: Message) -> None:
+    text = format_greeting(message.from_user.first_name)
+    await message.answer(text)
 
 
-async def grant_access(db_session, *, user_id: int, product_id: int):
-    ...  # foydalanuvchiga xizmatni yoqish
+# ---- 3) pytest fixture'lari ----
+@pytest.fixture
+def dp() -> Dispatcher:
+    d = Dispatcher()
+    d.include_router(router)
+    return d
 
 
-# --- Telegram Stars orqali invoice (raqamli tovar uchun) ---
-@router.message(Command("buy_stars"))
-async def cmd_buy_with_stars(message: Message):
-    await message.bot.send_invoice(
-        chat_id=message.chat.id,
-        title="Premium obuna (1 oy)",
-        description="Reklamasiz, cheksiz so'rovlar",
-        payload=f"stars_order:premium_1m:{message.from_user.id}",
-        provider_token="",       # Stars uchun bo'sh
-        currency="XTR",
-        prices=[LabeledPrice(label="Premium 1 oy", amount=100)],  # 100 Stars
+@pytest.fixture
+def bot() -> AsyncMock:
+    return AsyncMock(spec=Bot)
+
+
+def _make_update(text: str) -> Update:
+    chat = Chat(id=123, type="private")
+    user = User(id=42, is_bot=False, first_name="Aziz")
+    message = Message(message_id=1, date=datetime.now(), chat=chat, from_user=user, text=text)
+    return Update(update_id=1, message=message)
+
+
+# ---- 4a) Sof funksiyani testlash -- aiogram umuman ishtirok etmaydi ----
+def test_format_greeting() -> None:
+    assert format_greeting("Aziz") == "Salom, Aziz! Botga xush kelibsiz."
+
+
+# ---- 4b) Integratsion test -- Dispatcher orqali to'liq zanjirni tekshirish ----
+@pytest.mark.asyncio
+async def test_start_handler_replies(dp: Dispatcher, bot: AsyncMock) -> None:
+    update = _make_update("/start")
+
+    await dp.feed_update(bot, update)
+
+    bot.send_message.assert_called_once_with(
+        chat_id=123, text="Salom, Aziz! Botga xush kelibsiz."
     )
 
 
-# --- Stars to'lovini qaytarish ---
-async def refund_stars_payment(bot, user_id: int, charge_id: str) -> bool:
-    """Faqat XTR (Stars) to'lovlar uchun ishlaydi — fiat uchun provayder
-    paneli/API orqali qaytariladi, bu metod orqali emas."""
-    return await bot.refund_star_payment(user_id=user_id, telegram_payment_charge_id=charge_id)
+# ---- 5) pytest.ini / pyproject.toml sozlamasi (izoh sifatida) ----
+# [tool.pytest.ini_options]
+# asyncio_mode = "auto"
+# testpaths = ["tests"]
+#
+# Shu sozlama bilan @pytest.mark.asyncio har bir testga qo'lda yozilmaydi --
+# pytest-asyncio barcha "async def test_..." funksiyalarni avtomatik taniydi.
