@@ -1,115 +1,94 @@
-1-Telegram Mini Apps (WebApp): web_app tugmasi va Telegram.WebApp JS API
-Урок 1 из 14
-· 3 раздела
-📝
-Matn
-Matn
-#1
-🛠️ Muhit: bu backend kursi uchun PyCharm 2023.3 dan foydalaning. Terminalni ochish: Alt + F12.
-
-Oddiy bot doirasidan tashqariga chiqish
-48-kursda siz reply va inline klaviaturalar bilan ishladingiz — foydalanuvchi tugmani bosadi, bot matn yoki callback_data oladi. Bu yetarli bo'lgan holatlar ko'p, lekin forma to'ldirish, katalog ko'rish, xarita tanlash kabi vazifalarda matn-asosli interfeys tezda noqulay bo'lib qoladi. Telegram buning uchun Mini App (WebApp) deb ataladigan mexanizmni taqdim etadi — bot ichida ochiladigan to'liq huquqli veb-sahifa, HTML/CSS/JS bilan yozilgan, lekin Telegram'ning o'zi bilan integratsiyalashgan.
-
-web_app tugmasi: ikki xil joyda, ikki xil xulq-atvor
-Mini App'ni ochish uchun ikkita joy bor, va ular bir xil emas:
-
-KeyboardButton(text="...", web_app=WebAppInfo(url="...")) — reply klaviaturada, faqat shaxsiy chatda ishlaydi. Sahifa Telegram.WebApp.sendData(text) chaqirsa, bot tomonga oddiy message update keladi, unda content_type == "web_app_data" va message.web_app_data.data ichida yuborilgan matn bo'ladi.
-InlineKeyboardButton(text="...", web_app=WebAppInfo(url="...")) — botning o'z xabarida ishlaydi (guruhda ham), lekin natijani qaytarish uchun boshqa mexanizm kerak — inline rejimda answerWebAppQuery orqali.
-Amalda ko'p holatda kerak bo'ladigani — birinchisi: shaxsiy chatda "Katalog ochish" tugmasi, foydalanuvchi tanlov qiladi, sahifa sendData chaqiradi, bot javob beradi.
-
-Telegram.WebApp JS API — sahifa ichida nima mavjud
-Mini App ochilganda, sahifangizga <script src="https://telegram.org/js/telegram-web-app.js"></script> ulanadi va global window.Telegram.WebApp obyekti paydo bo'ladi:
-
-Metod / xususiyat	Vazifasi
-WebApp.ready()	Sahifa tayyor ekanini Telegram'ga bildiradi — splash screen yopiladi
-WebApp.expand()	Sahifani to'liq balandlikka kengaytiradi
-WebApp.close()	Mini App'ni yopadi
-WebApp.MainButton	Pastki katta tugma — setText(), show(), onClick()
-WebApp.BackButton	Yuqori chap orqaga tugmasi
-WebApp.themeParams / colorScheme	Foydalanuvchi Telegram mavzusiga (dark/light) moslashtirish uchun ranglar
-WebApp.initData / initDataUnsafe	Foydalanuvchi haqida imzolangan ma'lumot — keyingi darsda tekshiramiz
-WebApp.sendData(data)	Ma'lumotni botga web_app_data sifatida yuboradi va sahifani yopadi
-WebApp.HapticFeedback	Qurilmada mayin tebranish (vibratsiya) effektlari
-Nega initDataUnsafe nomida "Unsafe" so'zi bor
-Bu ataylab shunday nomlangan — initDataUnsafe allaqachon JavaScript obyektiga parslangan, lekin hali tasdiqlanmagan ma'lumot. Har qanday foydalanuvchi brauzer konsolida shu obyektni o'zgartirishi mumkin. Backend'ingiz unga ishonib, masalan, user.id asosida ma'lumotlar bazasidan yozuv qaytarsa — boshqa birov o'zini xohlagan foydalanuvchi qilib ko'rsatishi mumkin. Xom initData qatorini imzo (hash) bilan tekshirish — bu keyingi darsning butun mavzusi.
-
-Arxitektura: qayerda nima yashaydi
-Mini App uchun kamida ikkita qism kerak: HTTPS orqali xizmat qiladigan statik sahifa (Telegram faqat https:// manzillarni qabul qiladi, http:// yoki localhost ishlamaydi — test uchun ngrok kabi tunnel kerak bo'ladi) va aiogram tomonidagi bot kodi, u tugmani ro'yxatga oladi va qaytgan ma'lumotni qayta ishlaydi. Ikkalasi bitta serverda ham, alohida serverlarda ham bo'lishi mumkin — muhimi, HTTPS.
-
-Foydalanuvchi: 'Katalog' tugmasini bosadi
-
-Telegram: WebView'da sahifani ochadi
-
-Sahifa JS: WebApp.ready() + WebApp.expand()
-
-Foydalanuvchi: mahsulot tanlaydi
-
-Sahifa JS: WebApp.sendData(JSON)
-
-Telegram: sahifani yopadi
-
-Bot: message update, content_type=web_app_data
-
-aiogram handler: message.web_app_data.data ni o'qiydi
-
-Diagramma shuni ko'rsatadi: sendData chaqirilgach, Telegram avtomatik ravishda sahifani yopadi va botga oddiy xabar sifatida ma'lumot yuboradi — alohida webhook yoki API chaqiruvi shart emas.
-
-Fetch orqali muloqot — sendData'dan farqli yo'l
-sendData faqat bitta marta, sahifa yopilishidan oldin ishlaydi. Agar sahifa ochiq turgan holda backend bilan doimiy almashinuv kerak bo'lsa (masalan, katalogni yuklash, buyurtma holatini kuzatish), oddiy fetch() orqali o'z backend API'ingizga so'rov yuborilaveradi — bu holatda foydalanuvchini aniqlash uchun initData'ni so'rov sarlavhasida yuborish va uni backend'da tekshirish kerak bo'ladi (keyingi darsning mavzusi).
-
-💻
-Kod
-Kod
-#2
-python
- Nusxalash
-from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
-
-router = Router()
-
-MINI_APP_URL = "https://mysite.example.com/catalog"  # HTTPS shart
+import hashlib
+import hmac
+import time
+from urllib.parse import parse_qsl
 
 
-def catalog_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Katalogni ochish", web_app=WebAppInfo(url=MINI_APP_URL))]],
-        resize_keyboard=True,
+class InitDataError(Exception):
+    """initData tekshiruvidan o'tmadi."""
+
+
+def validate_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> dict:
+    """Telegram Mini App initData'sini HMAC-SHA256 orqali tekshiradi.
+
+    Muvaffaqiyatli bo'lsa parslangan maydonlar lug'atini qaytaradi
+    (shu jumladan 'user' -> dict). Muvaffaqiyatsiz bo'lsa InitDataError.
+    """
+    pairs = dict(parse_qsl(init_data, strict_parsing=True))
+    received_hash = pairs.pop("hash", None)
+    if not received_hash:
+        raise InitDataError("initData ichida 'hash' maydoni yo'q")
+
+    data_check_string = "\n".join(
+        f"{key}={value}" for key, value in sorted(pairs.items())
     )
 
+    secret_key = hmac.new(
+        key=b"WebAppData", msg=bot_token.encode(), digestmod=hashlib.sha256
+    ).digest()
+    computed_hash = hmac.new(
+        key=secret_key, msg=data_check_string.encode(), digestmod=hashlib.sha256
+    ).hexdigest()
 
-@router.message(Command("shop"))
-async def cmd_shop(message: Message):
-    await message.answer(
-        "Katalogni ko'rish uchun quyidagi tugmani bosing:",
-        reply_markup=catalog_keyboard(),
-    )
+    if not hmac.compare_digest(computed_hash, received_hash):
+        raise InitDataError("hash mos kelmadi — initData soxta yoki buzilgan")
 
+    auth_date = int(pairs.get("auth_date", 0))
+    if time.time() - auth_date > max_age_seconds:
+        raise InitDataError(f"initData eskirgan (auth_date {max_age_seconds}s dan katta)")
 
-@router.message(F.web_app_data)
-async def handle_web_app_data(message: Message, db_session):
     import json
+    if "user" in pairs:
+        pairs["user"] = json.loads(pairs["user"])
+    return pairs
 
-    raw = message.web_app_data.data
+
+# --- FastAPI'da ishlatish ---
+from fastapi import FastAPI, Header, HTTPException
+
+app = FastAPI()
+BOT_TOKEN = "123456:ABC-DEF..."  # .env'dan olinadi, hech qachon kodga yozilmaydi
+
+
+@app.get("/api/profile")
+async def profile(authorization: str = Header(...)):
+    if not authorization.startswith("tma "):
+        raise HTTPException(401, "Noto'g'ri Authorization format")
+    init_data = authorization.removeprefix("tma ")
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        await message.answer("Noto'g'ri ma'lumot formati.")
-        return
-
-    product_id = payload.get("product_id")
-    quantity = payload.get("quantity", 1)
-    await message.answer(
-        f"Buyurtma qabul qilindi: mahsulot #{product_id}, {quantity} dona."
-    )
-    # bu yerda haqiqiy buyurtma yozuvini DB'ga saqlash kerak bo'ladi
+        data = validate_init_data(init_data, BOT_TOKEN)
+    except InitDataError as e:
+        raise HTTPException(401, str(e))
+    user = data["user"]
+    return {"telegram_id": user["id"], "first_name": user.get("first_name")}
 
 
-# index.html / app.js (Mini App sahifasi) — to'liq versiyasi "sample" bo'limida.
-# Sahifa tomonidagi asosiy chaqiruv shunday ko'rinadi:
-#
-#     Telegram.WebApp.sendData(JSON.stringify({"product_id": 42, "quantity": 2}));
-#
-# sendData chaqirilgach, Telegram sahifani avtomatik yopadi va
-# yuqoridagi handle_web_app_data handleri ishga tushadi.
+def _build_test_init_data(bot_token: str, user: dict, auth_date: int) -> str:
+    """Faqat testlar uchun: haqiqiy initData'ga o'xshash, to'g'ri imzolangan
+    qatorni qo'lda yasab beradi — validate_init_data'ni Telegram'siz sinash uchun."""
+    import json
+    from urllib.parse import urlencode
+
+    fields = {"auth_date": str(auth_date), "query_id": "AAH1234", "user": json.dumps(user)}
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    fields["hash"] = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    return urlencode(fields)
+
+
+def test_validate_init_data_ok():
+    token = "TEST:TOKEN"
+    raw = _build_test_init_data(token, {"id": 1, "first_name": "Aziz"}, int(time.time()))
+    result = validate_init_data(raw, token)
+    assert result["user"]["first_name"] == "Aziz"
+
+
+def test_validate_init_data_tampered():
+    token = "TEST:TOKEN"
+    raw = _build_test_init_data(token, {"id": 1, "first_name": "Aziz"}, int(time.time()))
+    tampered = raw.replace("Aziz", "Hacker")
+    try:
+        validate_init_data(tampered, token)
+        assert False, "bu yerga yetib kelmasligi kerak"
+    except InitDataError:
+        pass
