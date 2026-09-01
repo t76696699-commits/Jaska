@@ -1,58 +1,58 @@
-from aiogram import Router
-from aiogram.types import Message, PreCheckoutQuery, LabeledPrice
+from aiogram import Router, F
 from aiogram.filters import Command
+from aiogram.types import Message, LabeledPrice
+from sqlalchemy.exc import IntegrityError
 
 router = Router()
 
-PROVIDER_TOKEN = "381764678:TEST:12345"  # BotFather orqali olingan, .env'da saqlanadi
-CURRENCY = "UZS"
 
+@router.message(F.successful_payment)
+async def handle_successful_payment(message: Message, db_session):
+    payment = message.successful_payment
 
-def to_minor_units(sum_uzs: int) -> int:
-    """Provayder talab qiladigan eng kichik birlikka o'tkazadi.
-    Aniq koeffitsientni ishlatilayotgan provayderning hujjatidan tasdiqlang."""
-    return sum_uzs * 100
-
-
-@router.message(Command("buy"))
-async def cmd_buy(message: Message, db_session):
-    product = await get_product(db_session, sku="premium_1m")
-    if product.stock <= 0:
-        await message.answer("Kechirasiz, mahsulot tugagan.")
+    try:
+        await save_payment_record(
+            db_session,
+            charge_id=payment.telegram_payment_charge_id,
+            invoice_payload=payment.invoice_payload,
+            amount=payment.total_amount,
+            currency=payment.currency,
+        )
+    except IntegrityError:
+        # charge_id UNIQUE ustunga to'qnashdi — bu update allaqachon qayta ishlangan,
+        # xizmatni ikkinchi marta bermaslik uchun shu yerda to'xtaymiz
+        await db_session.rollback()
         return
 
+    _, product_id, user_id = payment.invoice_payload.split(":")
+    await grant_access(db_session, user_id=int(user_id), product_id=int(product_id))
+    await message.answer("To'lovingiz uchun rahmat! Xizmat faollashtirildi.")
+
+
+async def save_payment_record(db_session, *, charge_id: str, invoice_payload: str, amount: int, currency: str):
+    ...  # INSERT ... charge_id UNIQUE bo'lgan jadvalga
+
+
+async def grant_access(db_session, *, user_id: int, product_id: int):
+    ...  # foydalanuvchiga xizmatni yoqish
+
+
+# --- Telegram Stars orqali invoice (raqamli tovar uchun) ---
+@router.message(Command("buy_stars"))
+async def cmd_buy_with_stars(message: Message):
     await message.bot.send_invoice(
         chat_id=message.chat.id,
-        title=product.title,
-        description=product.description,
-        payload=f"order:{product.id}:{message.from_user.id}",
-        provider_token=PROVIDER_TOKEN,
-        currency=CURRENCY,
-        prices=[LabeledPrice(label=product.title, amount=to_minor_units(product.price_uzs))],
+        title="Premium obuna (1 oy)",
+        description="Reklamasiz, cheksiz so'rovlar",
+        payload=f"stars_order:premium_1m:{message.from_user.id}",
+        provider_token="",       # Stars uchun bo'sh
+        currency="XTR",
+        prices=[LabeledPrice(label="Premium 1 oy", amount=100)],  # 100 Stars
     )
 
 
-@router.pre_checkout_query()
-async def handle_pre_checkout(pre_checkout_query: PreCheckoutQuery, db_session):
-    _, product_id, user_id = pre_checkout_query.invoice_payload.split(":")
-    product = await get_product(db_session, id=int(product_id))
-
-    if product is None or product.stock <= 0:
-        await pre_checkout_query.bot.answer_pre_checkout_query(
-            pre_checkout_query.id, ok=False,
-            error_message="Kechirasiz, mahsulot tugab qoldi. Pul yechilmadi.",
-        )
-        return
-
-    expected_amount = to_minor_units(product.price_uzs)
-    if pre_checkout_query.total_amount != expected_amount:
-        await pre_checkout_query.bot.answer_pre_checkout_query(
-            pre_checkout_query.id, ok=False, error_message="Narx nomuvofiqligi aniqlandi.",
-        )
-        return
-
-    await pre_checkout_query.bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
-
-async def get_product(db_session, **filters):
-    ...  # repository qatlamidan haqiqiy so'rov
+# --- Stars to'lovini qaytarish ---
+async def refund_stars_payment(bot, user_id: int, charge_id: str) -> bool:
+    """Faqat XTR (Stars) to'lovlar uchun ishlaydi — fiat uchun provayder
+    paneli/API orqali qaytariladi, bu metod orqali emas."""
+    return await bot.refund_star_payment(user_id=user_id, telegram_payment_charge_id=charge_id)
