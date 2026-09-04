@@ -1,150 +1,154 @@
 # ═══════════════════════════════════════════════════════════════════════
-# Redis-based token bucket throttling + graduated ban (aiogram outer middleware)
+# Outer va Inner middleware zanjiri: ishga tushirish tartibini isbotlash
 # ═══════════════════════════════════════════════════════════════════════
-import time
 from typing import Any, Awaitable, Callable, Dict
 
-from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, Update
-from redis.asyncio import Redis
-
-_TOKEN_BUCKET_LUA = """
-local key = KEYS[1]
-local capacity = tonumber(ARGV[1])
-local refill_rate = tonumber(ARGV[2])
-local now = tonumber(ARGV[3])
-
-local bucket = redis.call("HMGET", key, "tokens", "ts")
-local tokens = tonumber(bucket[1]) or capacity
-local last_ts = tonumber(bucket[2]) or now
-
-local elapsed = now - last_ts
-tokens = math.min(capacity, tokens + elapsed * refill_rate)
-
-if tokens < 1 then
-  return 0
-end
-
-tokens = tokens - 1
-redis.call("HMSET", key, "tokens", tokens, "ts", now)
-redis.call("EXPIRE", key, 3600)
-return 1
-"""
+from aiogram import BaseMiddleware, Router
+from aiogram.types import Message, TelegramObject
 
 
-class RedisThrottlingMiddleware(BaseMiddleware):
-    # Outer middleware — barcha workerlar uchun umumiy Redis orqali
-    # token-bucket throttling + bosqichma-bosqich vaqtinchalik ban.
+class OuterLoggingMiddleware(BaseMiddleware):
+    # Outer #1 — HAR bir update uchun ishlaydi.
 
-    def __init__(self, redis: Redis, capacity: int = 5, refill_rate: float = 1.0):
-        self.redis = redis
-        self.capacity = capacity
-        self.refill_rate = refill_rate
-        self._script = redis.register_script(_TOKEN_BUCKET_LUA)
+    async def __call__(self, handler, event: TelegramObject, data: Dict[str, Any]) -> Any:
+        print("-> OUTER logging: kirish")
+        result = await handler(event, data)
+        print("<- OUTER logging: chiqish")
+        return result
 
-    async def __call__(
-        self,
-        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
-        event: Update,
-        data: Dict[str, Any],
-    ) -> Any:
-        user = data.get("event_from_user")
-        if not user:
-            return await handler(event, data)
 
-        ban_key = f"ban:{user.id}"
-        if await self.redis.exists(ban_key):
-            return None  # jim rad etiladi — bloklangan foydalanuvchiga javob yo'q
+class OuterAuthMiddleware(BaseMiddleware):
+    # Outer #2 — HAR bir update uchun ishlaydi, logging ICHIDA.
 
-        bucket_key = f"bucket:{user.id}"
-        allowed = await self._script(
-            keys=[bucket_key],
-            args=[self.capacity, self.refill_rate, time.time()],
-        )
+    async def __call__(self, handler, event: TelegramObject, data: Dict[str, Any]) -> Any:
+        print("-> OUTER auth: tekshirilmoqda")
+        result = await handler(event, data)
+        print("<- OUTER auth: tugadi")
+        return result
 
-        if not allowed:
-            violations_key = f"violations:{user.id}"
-            violations = await self.redis.incr(violations_key)
-            await self.redis.expire(violations_key, 60)
-            if violations >= 3:
-                await self.redis.set(ban_key, 1, ex=300)  # 5 daqiqalik ban
-            bot = data["bot"]
-            chat = data.get("event_chat")
-            if chat:
-                await bot.send_message(chat.id, "Iltimos, biroz sekinroq yozing.")
-            return None
 
-        return await handler(event, data)
+class InnerLoadCartMiddleware(BaseMiddleware):
+    # Inner #1 — FAQAT filtr mos kelgan handler uchun ishlaydi.
+
+    async def __call__(self, handler, event: Message, data: Dict[str, Any]) -> Any:
+        print("-> INNER savat yuklash")
+        data["cart"] = {"items": []}  # odatda bazadan yuklanadi
+        result = await handler(event, data)
+        print("<- INNER savat: tozalash")
+        return result
+
+
+class InnerTimingMiddleware(BaseMiddleware):
+    # Inner #2 — handlerga eng yaqin qatlam.
+
+    async def __call__(self, handler, event: Message, data: Dict[str, Any]) -> Any:
+        print("-> INNER timing: boshlandi")
+        result = await handler(event, data)
+        print("<- INNER timing: tugadi")
+        return result
+
+
+def register_middlewares(router: Router) -> None:
+    # Ro'yxatdan o'tkazish tartibi = ichma-ich joylashish tartibi
+    router.update.outer_middleware(OuterLoggingMiddleware())   # eng tashqi
+    router.update.outer_middleware(OuterAuthMiddleware())
+    router.message.middleware(InnerLoadCartMiddleware())
+    router.message.middleware(InnerTimingMiddleware())          # handlerga eng yaqin
+
+
+# Kutilgan konsol chiqishi mos handler topilganda:
+# -> OUTER logging: kirish
+# -> OUTER auth: tekshirilmoqda
+# -> INNER savat yuklash
+# -> INNER timing: boshlandi
+#   (handler ishlaydi)
+# <- INNER timing: tugadi
+# <- INNER savat: tozalash
+# <- OUTER auth: tugadi
+# <- OUTER logging: chiqish
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Botga ulash: ikki alohida worker process bir xil Redis'ga ulanadi
+# Nested router'lar: admin_router va user_router asosiy dispetcherga ulanadi
 # ═══════════════════════════════════════════════════════════════════════
-import asyncio
-import os
-
-from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart
+from aiogram import Dispatcher
+from aiogram.filters import Command
 from aiogram.types import Message
 
+admin_router = Router(name="admin")
+user_router = Router(name="user")
 
-async def create_dispatcher() -> Dispatcher:
-    redis = Redis.from_url(os.environ["REDIS_URL"], decode_responses=False)
+
+@admin_router.message(Command("stats"))
+async def cmd_stats(message: Message) -> None:
+    await message.answer("Statistika: faol foydalanuvchilar soni ...")
+
+
+@user_router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    await message.answer("Yordam: /start, /help buyruqlari mavjud.")
+
+
+def build_dispatcher() -> Dispatcher:
     dp = Dispatcher()
-    dp.update.outer_middleware(
-        RedisThrottlingMiddleware(redis, capacity=5, refill_rate=1.0)
-    )
+    # Outer middleware'lar ASOSIY dispetcherga qo'yiladi — shu tufayli
+    # admin_router HAM, user_router HAM ular orqali o'tadi, chunki
+    # include_router qilingan router'lar ota dispetcherning outer
+    # middleware'laridan chetlanib qololmaydi.
+    dp.update.outer_middleware(OuterLoggingMiddleware())
+    dp.update.outer_middleware(OuterAuthMiddleware())
 
-    @dp.message(CommandStart())
-    async def cmd_start(message: Message) -> None:
-        await message.answer("Salom! Bu botning barcha workerlari bitta Redis limitini bo'lishadi.")
+    user_router.message.middleware(InnerLoadCartMiddleware())
+    user_router.message.middleware(InnerTimingMiddleware())
 
+    dp.include_router(admin_router)
+    dp.include_router(user_router)
     return dp
 
 
-async def main() -> None:
-    # WORKER_NAME faqat log/diagnostika uchun — throttling holati Redis'da,
-    # shuning uchun WORKER_NAME=worker-1 yoki worker-2 bilan ishga tushirilgan
-    # ikki jarayon HAM bitta umumiy limitni ko'radi.
-    worker_name = os.environ.get("WORKER_NAME", "worker-1")
-    bot = Bot(token=os.environ["BOT_TOKEN"])
-    dp = await create_dispatcher()
-    print(f"{worker_name} ishga tushdi, Redis orqali umumiy throttling faol")
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
-
 # ═══════════════════════════════════════════════════════════════════════
-# pytest: token bucket atomikligini tekshirish (fakeredis bilan)
+# pytest: ishga tushirish tartibini ro'yxat orqali isbotlash
 # ═══════════════════════════════════════════════════════════════════════
 import pytest
 
 
+class RecordingMiddleware(BaseMiddleware):
+    # Sinov uchun: har bir bosqichni umumiy ro'yxatga yozib boradi.
+
+    def __init__(self, name: str, trace: list):
+        self.name = name
+        self.trace = trace
+
+    async def __call__(self, handler, event, data):
+        self.trace.append(f"-> {self.name}")
+        result = await handler(event, data)
+        self.trace.append(f"<- {self.name}")
+        return result
+
+
 @pytest.mark.asyncio
-async def test_token_bucket_blocks_after_capacity_exhausted():
-    import fakeredis.aioredis
-    redis = fakeredis.aioredis.FakeRedis()
-    middleware = RedisThrottlingMiddleware(redis, capacity=2, refill_rate=0.0)
+async def test_middleware_order_is_onion_shaped():
+    trace: list[str] = []
+    router = Router(name="test")
+    router.update.outer_middleware(RecordingMiddleware("OUTER-1", trace))
+    router.update.outer_middleware(RecordingMiddleware("OUTER-2", trace))
+    router.message.middleware(RecordingMiddleware("INNER-1", trace))
+    router.message.middleware(RecordingMiddleware("INNER-2", trace))
 
-    calls = []
+    @router.message(Command("ping"))
+    async def handler(message: Message) -> None:
+        trace.append("HANDLER")
 
-    async def fake_handler(event, data):
-        calls.append(1)
-        return "ok"
+    dp = Dispatcher()
+    dp.include_router(router)
 
-    class _User:
-        id = 555
+    # _build_fake_command_update — 6-darsda ("Botlarni testlash") yozilgan
+    # yordamchi funksiya: minimal Update/Message obyektini qo'lda quradi.
+    fake_update = _build_fake_command_update("/ping")
+    await dp.feed_update(bot=None, update=fake_update)
 
-    class _Chat:
-        id = 555
-
-    data = {"event_from_user": _User(), "event_chat": _Chat(), "bot": None}
-
-    # refill_rate=0.0 bo'lgani uchun to'ldirilmaydi: birinchi ikkita so'rov
-    # o'tadi (capacity=2), uchinchisi token yo'qligi sababli rad etiladi
-    for _ in range(3):
-        await middleware(fake_handler, event=None, data=data)
-    assert len(calls) == 2
+    assert trace == [
+        "-> OUTER-1", "-> OUTER-2", "-> INNER-1", "-> INNER-2",
+        "HANDLER",
+        "<- INNER-2", "<- INNER-1", "<- OUTER-2", "<- OUTER-1",
+    ]
