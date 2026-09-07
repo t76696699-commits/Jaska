@@ -1,154 +1,51 @@
-# ═══════════════════════════════════════════════════════════════════════
-# Outer va Inner middleware zanjiri: ishga tushirish tartibini isbotlash
-# ═══════════════════════════════════════════════════════════════════════
-from typing import Any, Awaitable, Callable, Dict
+from pyrogram import Client, filters
+from pyrogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto,
+)
+from pyrogram.enums import ParseMode
 
-from aiogram import BaseMiddleware, Router
-from aiogram.types import Message, TelegramObject
-
-
-class OuterLoggingMiddleware(BaseMiddleware):
-    # Outer #1 — HAR bir update uchun ishlaydi.
-
-    async def __call__(self, handler, event: TelegramObject, data: Dict[str, Any]) -> Any:
-        print("-> OUTER logging: kirish")
-        result = await handler(event, data)
-        print("<- OUTER logging: chiqish")
-        return result
+app = Client("rich_messages_demo")
 
 
-class OuterAuthMiddleware(BaseMiddleware):
-    # Outer #2 — HAR bir update uchun ishlaydi, logging ICHIDA.
-
-    async def __call__(self, handler, event: TelegramObject, data: Dict[str, Any]) -> Any:
-        print("-> OUTER auth: tekshirilmoqda")
-        result = await handler(event, data)
-        print("<- OUTER auth: tugadi")
-        return result
-
-
-class InnerLoadCartMiddleware(BaseMiddleware):
-    # Inner #1 — FAQAT filtr mos kelgan handler uchun ishlaydi.
-
-    async def __call__(self, handler, event: Message, data: Dict[str, Any]) -> Any:
-        print("-> INNER savat yuklash")
-        data["cart"] = {"items": []}  # odatda bazadan yuklanadi
-        result = await handler(event, data)
-        print("<- INNER savat: tozalash")
-        return result
+@app.on_message(filters.command("menu"))
+async def show_menu(client, message):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Katalog", callback_data="menu_catalog"),
+         InlineKeyboardButton("Buyurtmalarim", callback_data="menu_orders")],
+        [InlineKeyboardButton("Bizning sayt", url="https://example.com")],
+    ])
+    await message.reply_text(
+        "**Asosiy menyu**\nKerakli bo'limni tanlang:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=keyboard,
+    )
 
 
-class InnerTimingMiddleware(BaseMiddleware):
-    # Inner #2 — handlerga eng yaqin qatlam.
-
-    async def __call__(self, handler, event: Message, data: Dict[str, Any]) -> Any:
-        print("-> INNER timing: boshlandi")
-        result = await handler(event, data)
-        print("<- INNER timing: tugadi")
-        return result
-
-
-def register_middlewares(router: Router) -> None:
-    # Ro'yxatdan o'tkazish tartibi = ichma-ich joylashish tartibi
-    router.update.outer_middleware(OuterLoggingMiddleware())   # eng tashqi
-    router.update.outer_middleware(OuterAuthMiddleware())
-    router.message.middleware(InnerLoadCartMiddleware())
-    router.message.middleware(InnerTimingMiddleware())          # handlerga eng yaqin
+@app.on_message(filters.command("album"))
+async def send_album(client, message):
+    await client.send_media_group(
+        message.chat.id,
+        [
+            InputMediaPhoto("images/product1.jpg", caption="Yangi kolleksiya — 3 ta mahsulot"),
+            InputMediaPhoto("images/product2.jpg"),
+            InputMediaPhoto("images/product3.jpg"),
+        ],
+    )
 
 
-# Kutilgan konsol chiqishi mos handler topilganda:
-# -> OUTER logging: kirish
-# -> OUTER auth: tekshirilmoqda
-# -> INNER savat yuklash
-# -> INNER timing: boshlandi
-#   (handler ishlaydi)
-# <- INNER timing: tugadi
-# <- INNER savat: tozalash
-# <- OUTER auth: tugadi
-# <- OUTER logging: chiqish
+# file_id'ni keshlash — qayta yuklashdan qochish
+_cached_banner_id: str | None = None
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Nested router'lar: admin_router va user_router asosiy dispetcherga ulanadi
-# ═══════════════════════════════════════════════════════════════════════
-from aiogram import Dispatcher
-from aiogram.filters import Command
-from aiogram.types import Message
-
-admin_router = Router(name="admin")
-user_router = Router(name="user")
-
-
-@admin_router.message(Command("stats"))
-async def cmd_stats(message: Message) -> None:
-    await message.answer("Statistika: faol foydalanuvchilar soni ...")
+@app.on_message(filters.command("banner"))
+async def send_banner(client, message):
+    global _cached_banner_id
+    if _cached_banner_id:
+        await message.reply_photo(_cached_banner_id)
+        return
+    sent = await message.reply_photo("images/banner.jpg", caption="Bizning banner")
+    _cached_banner_id = sent.photo.file_id
 
 
-@user_router.message(Command("help"))
-async def cmd_help(message: Message) -> None:
-    await message.answer("Yordam: /start, /help buyruqlari mavjud.")
-
-
-def build_dispatcher() -> Dispatcher:
-    dp = Dispatcher()
-    # Outer middleware'lar ASOSIY dispetcherga qo'yiladi — shu tufayli
-    # admin_router HAM, user_router HAM ular orqali o'tadi, chunki
-    # include_router qilingan router'lar ota dispetcherning outer
-    # middleware'laridan chetlanib qololmaydi.
-    dp.update.outer_middleware(OuterLoggingMiddleware())
-    dp.update.outer_middleware(OuterAuthMiddleware())
-
-    user_router.message.middleware(InnerLoadCartMiddleware())
-    user_router.message.middleware(InnerTimingMiddleware())
-
-    dp.include_router(admin_router)
-    dp.include_router(user_router)
-    return dp
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# pytest: ishga tushirish tartibini ro'yxat orqali isbotlash
-# ═══════════════════════════════════════════════════════════════════════
-import pytest
-
-
-class RecordingMiddleware(BaseMiddleware):
-    # Sinov uchun: har bir bosqichni umumiy ro'yxatga yozib boradi.
-
-    def __init__(self, name: str, trace: list):
-        self.name = name
-        self.trace = trace
-
-    async def __call__(self, handler, event, data):
-        self.trace.append(f"-> {self.name}")
-        result = await handler(event, data)
-        self.trace.append(f"<- {self.name}")
-        return result
-
-
-@pytest.mark.asyncio
-async def test_middleware_order_is_onion_shaped():
-    trace: list[str] = []
-    router = Router(name="test")
-    router.update.outer_middleware(RecordingMiddleware("OUTER-1", trace))
-    router.update.outer_middleware(RecordingMiddleware("OUTER-2", trace))
-    router.message.middleware(RecordingMiddleware("INNER-1", trace))
-    router.message.middleware(RecordingMiddleware("INNER-2", trace))
-
-    @router.message(Command("ping"))
-    async def handler(message: Message) -> None:
-        trace.append("HANDLER")
-
-    dp = Dispatcher()
-    dp.include_router(router)
-
-    # _build_fake_command_update — 6-darsda ("Botlarni testlash") yozilgan
-    # yordamchi funksiya: minimal Update/Message obyektini qo'lda quradi.
-    fake_update = _build_fake_command_update("/ping")
-    await dp.feed_update(bot=None, update=fake_update)
-
-    assert trace == [
-        "-> OUTER-1", "-> OUTER-2", "-> INNER-1", "-> INNER-2",
-        "HANDLER",
-        "<- INNER-2", "<- INNER-1", "<- OUTER-2", "<- OUTER-1",
-    ]
+if __name__ == "__main__":
+    app.run()
