@@ -1,50 +1,51 @@
 from pyrogram import Client, filters
 from pyrogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    InlineQueryResultArticle, InputTextMessageContent,
 )
-from pyrogram.enums import ParseMode
 
-app = Client("rich_messages_demo")
+app = Client("callback_inline_demo")
+
+_PRODUCTS = {"1": "Kitob", "2": "Ruchka", "3": "Daftar"}
 
 
-@app.on_message(filters.command("menu"))
-async def show_menu(client, message):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Katalog", callback_data="menu_catalog"),
-         InlineKeyboardButton("Buyurtmalarim", callback_data="menu_orders")],
-        [InlineKeyboardButton("Bizning sayt", url="https://example.com")],
-    ])
-    await message.reply_text(
-        "**Asosiy menyu**\nKerakli bo'limni tanlang:",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=keyboard,
+@app.on_message(filters.command("shop"))
+async def shop(client, message):
+    buttons = [
+        [InlineKeyboardButton(name, callback_data=f"prod:view:{pid}")]
+        for pid, name in _PRODUCTS.items()
+    ]
+    await message.reply_text("Mahsulotlar:", reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@app.on_callback_query(filters.regex(r"^prod:view:"))
+async def view_product(client, callback_query):
+    _, _, product_id = callback_query.data.split(":")
+    name = _PRODUCTS.get(product_id, "Noma'lum")
+    await callback_query.answer()  # majburiy — "yuklanmoqda"ni olib tashlaydi
+    buttons = [[InlineKeyboardButton("Xarid qilish", callback_data=f"prod:buy:{product_id}")]]
+    await callback_query.message.edit_text(
+        f"Siz tanladingiz: {name}", reply_markup=InlineKeyboardMarkup(buttons)
     )
 
 
-@app.on_message(filters.command("album"))
-async def send_album(client, message):
-    await client.send_media_group(
-        message.chat.id,
-        [
-            InputMediaPhoto("images/product1.jpg", caption="Yangi kolleksiya — 3 ta mahsulot"),
-            InputMediaPhoto("images/product2.jpg"),
-            InputMediaPhoto("images/product3.jpg"),
-        ],
-    )
+@app.on_callback_query(filters.regex(r"^prod:buy:"))
+async def buy_product(client, callback_query):
+    await callback_query.answer("Buyurtma qabul qilindi!", show_alert=True)
 
 
-# file_id'ni keshlash — qayta yuklashdan qochish
-_cached_banner_id: str | None = None
-
-
-@app.on_message(filters.command("banner"))
-async def send_banner(client, message):
-    global _cached_banner_id
-    if _cached_banner_id:
-        await message.reply_photo(_cached_banner_id)
-        return
-    sent = await message.reply_photo("images/banner.jpg", caption="Bizning banner")
-    _cached_banner_id = sent.photo.file_id
+@app.on_inline_query()
+async def search_products(client, inline_query):
+    q = inline_query.query.lower()
+    results = [
+        InlineQueryResultArticle(
+            title=name,
+            input_message_content=InputTextMessageContent(f"{name} — narxini so'rash uchun /shop"),
+        )
+        for pid, name in _PRODUCTS.items()
+        if q in name.lower()
+    ]
+    await inline_query.answer(results, cache_time=1)
 
 
 if __name__ == "__main__":
