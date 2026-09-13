@@ -1,79 +1,64 @@
 
-# Uchala variantning ham ulanish/qidiruv kodi qanday ko'rinishini
-# solishtirish — konseptual, ishga tushirilmaydi (API kalitlar yo'q),
-# lekin har birining haqiqiy Python client kutubxonasi shaklini aks ettiradi.
+# Konseptual (haqiqiy DB'da ishga TUSHIRILMAYDI) — pgvector sozlash va
+# ishlatishning to'liq Python + SQLAlchemy shakli. Buni O'Z loyihangizning
+# migratsiya faylida yoki alohida sozlash skriptida ishlating.
 
-# ---------------------------------------------------------------------------
-# 1) pgvector — oddiy SQL orqali, mavjud SQLAlchemy sessiyasidan foydalanib
-# ---------------------------------------------------------------------------
+PGVECTOR_SETUP_SQL = """
+-- 1) Kengaytmani yoqish (server darajasida kutubxona o'rnatilgan bo'lishi kerak)
+CREATE EXTENSION IF NOT EXISTS vector;
 
-PGVECTOR_EXAMPLE = '''
-from sqlalchemy import text
+-- 2) Vektor ustunli jadval
+CREATE TABLE IF NOT EXISTS lesson_embeddings (
+    id SERIAL PRIMARY KEY,
+    lesson_id INTEGER NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+    chunk_text TEXT NOT NULL,
+    chunk_heading VARCHAR(500),
+    embedding vector(384) NOT NULL
+);
 
-async def search_pgvector(db, query_vector: list[float], k: int = 3):
+-- 3) ANN indeks (katta miqyos uchun; kichik jadvalda shart emas)
+CREATE INDEX IF NOT EXISTS lesson_embeddings_hnsw_idx
+    ON lesson_embeddings USING hnsw (embedding vector_cosine_ops);
+"""
+
+
+async def insert_chunk_embedding(db, lesson_id: int, chunk_text: str, heading: str, embedding: list[float]) -> None:
+    """O'z loyihangizda: bitta chunk + uning embeddingini saqlaydi.
+    `db` — mavjud AsyncSession (bu platformadagi barcha skriptlar
+    ishlatadigan xuddi shu pattern)."""
+    from sqlalchemy import text
+    await db.execute(
+        text(
+            "INSERT INTO lesson_embeddings (lesson_id, chunk_text, chunk_heading, embedding) "
+            "VALUES (:lesson_id, :chunk_text, :heading, :embedding)"
+        ),
+        {
+            "lesson_id": lesson_id,
+            "chunk_text": chunk_text,
+            "heading": heading,
+            "embedding": str(embedding),  # pgvector matn shaklidagi '[0.1,0.2,...]'ni kutadi
+        },
+    )
+
+
+async def search_lesson_embeddings(db, query_vector: list[float], k: int = 5) -> list:
+    """Eng mos k ta chunk'ni qaytaradi, masofa (distance) bo'yicha
+    o'sish tartibida (kichikroq masofa = yaqinroq ma'no)."""
+    from sqlalchemy import text
     rows = await db.execute(
         text(
-            "SELECT id, title, embedding <=> :qv AS distance "
+            "SELECT lesson_id, chunk_text, chunk_heading, "
+            "embedding <=> :qv AS distance "
             "FROM lesson_embeddings "
-            "ORDER BY embedding <=> :qv LIMIT :k"
+            "ORDER BY embedding <=> :qv "
+            "LIMIT :k"
         ),
         {"qv": str(query_vector), "k": k},
     )
     return rows.fetchall()
-'''
-
-# ---------------------------------------------------------------------------
-# 2) Chroma — o'z Python client kutubxonasi orqali (chromadb paketi)
-# ---------------------------------------------------------------------------
-
-CHROMA_EXAMPLE = '''
-import chromadb
-
-client = chromadb.PersistentClient(path="./chroma_data")
-collection = client.get_or_create_collection("lessons")
-
-collection.add(
-    ids=["lesson_7", "lesson_11"],
-    embeddings=[[0.1, 0.2, 0.3], [0.4, 0.1, 0.2]],
-    documents=["Class ID haqida dars", "Display Flex haqida dars"],
-)
-
-results = collection.query(query_embeddings=[[0.12, 0.19, 0.28]], n_results=3)
-'''
-
-# ---------------------------------------------------------------------------
-# 3) Pinecone — tashqi bulutli xizmat, o'z Python SDK'si orqali
-# ---------------------------------------------------------------------------
-
-PINECONE_EXAMPLE = '''
-from pinecone import Pinecone
-
-pc = Pinecone(api_key="...")
-index = pc.Index("lessons-index")
-
-index.upsert(vectors=[
-    {"id": "lesson_7", "values": [0.1, 0.2, 0.3]},
-    {"id": "lesson_11", "values": [0.4, 0.1, 0.2]},
-])
-
-matches = index.query(vector=[0.12, 0.19, 0.28], top_k=3)
-'''
-
-
-def print_comparison() -> None:
-    print("=== pgvector (SQL, mavjud Postgres bazasida) ===")
-    print(PGVECTOR_EXAMPLE)
-    print("=== Chroma (mahalliy, chromadb paketi) ===")
-    print(CHROMA_EXAMPLE)
-    print("=== Pinecone (bulutli, tashqi xizmat) ===")
-    print(PINECONE_EXAMPLE)
-    print(
-        "DIQQAT: uchala kod ham konseptual — API kalitlari/paketlar "
-        "o'rnatilmagan, shuning uchun ishga tushirilmaydi. Maqsad — "
-        "SHAKLNI solishtirish: pgvector oddiy SQL, Chroma mahalliy client, "
-        "Pinecone tashqi bulutli SDK."
-    )
 
 
 if __name__ == "__main__":
-    print_comparison()
+    print("Bu modul faqat namuna kodini o'z ichiga oladi — DB'ga ulanmaydi.")
+    print("O'Z loyihangizda ishlatish uchun PGVECTOR_SETUP_SQL'ni migratsiya sifatida ishga tushiring.")
+    print(PGVECTOR_SETUP_SQL)
