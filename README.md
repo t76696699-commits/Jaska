@@ -1,64 +1,60 @@
 
-# Konseptual (haqiqiy DB'da ishga TUSHIRILMAYDI) — pgvector sozlash va
-# ishlatishning to'liq Python + SQLAlchemy shakli. Buni O'Z loyihangizning
-# migratsiya faylida yoki alohida sozlash skriptida ishlating.
+# Token byudjetini dinamik boshqarish: chunk'larni cosine balliga ko'ra
+# saralab, byudjetga sig'guncha qo'shib borish.
 
-PGVECTOR_SETUP_SQL = """
--- 1) Kengaytmani yoqish (server darajasida kutubxona o'rnatilgan bo'lishi kerak)
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- 2) Vektor ustunli jadval
-CREATE TABLE IF NOT EXISTS lesson_embeddings (
-    id SERIAL PRIMARY KEY,
-    lesson_id INTEGER NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-    chunk_text TEXT NOT NULL,
-    chunk_heading VARCHAR(500),
-    embedding vector(384) NOT NULL
-);
-
--- 3) ANN indeks (katta miqyos uchun; kichik jadvalda shart emas)
-CREATE INDEX IF NOT EXISTS lesson_embeddings_hnsw_idx
-    ON lesson_embeddings USING hnsw (embedding vector_cosine_ops);
-"""
+from __future__ import annotations
 
 
-async def insert_chunk_embedding(db, lesson_id: int, chunk_text: str, heading: str, embedding: list[float]) -> None:
-    """O'z loyihangizda: bitta chunk + uning embeddingini saqlaydi.
-    `db` — mavjud AsyncSession (bu platformadagi barcha skriptlar
-    ishlatadigan xuddi shu pattern)."""
-    from sqlalchemy import text
-    await db.execute(
-        text(
-            "INSERT INTO lesson_embeddings (lesson_id, chunk_text, chunk_heading, embedding) "
-            "VALUES (:lesson_id, :chunk_text, :heading, :embedding)"
-        ),
-        {
-            "lesson_id": lesson_id,
-            "chunk_text": chunk_text,
-            "heading": heading,
-            "embedding": str(embedding),  # pgvector matn shaklidagi '[0.1,0.2,...]'ni kutadi
-        },
-    )
+def estimate_tokens(text: str) -> int:
+    """Taxminiy token soni — aniq tokenizator o'rniga tezkor baholash
+    (~4 belgi = 1 token). Production'da tiktoken kabi haqiqiy
+    tokenizatordan foydalaning; bu FAQAT tezkor taxmin."""
+    return max(1, len(text) // 4)
 
 
-async def search_lesson_embeddings(db, query_vector: list[float], k: int = 5) -> list:
-    """Eng mos k ta chunk'ni qaytaradi, masofa (distance) bo'yicha
-    o'sish tartibida (kichikroq masofa = yaqinroq ma'no)."""
-    from sqlalchemy import text
-    rows = await db.execute(
-        text(
-            "SELECT lesson_id, chunk_text, chunk_heading, "
-            "embedding <=> :qv AS distance "
-            "FROM lesson_embeddings "
-            "ORDER BY embedding <=> :qv "
-            "LIMIT :k"
-        ),
-        {"qv": str(query_vector), "k": k},
-    )
-    return rows.fetchall()
+def fit_chunks_to_budget(
+    chunks: list[dict],
+    *,
+    token_budget: int,
+    reserved_for_answer: int = 300,
+    reserved_for_instruction: int = 60,
+) -> list[dict]:
+    """Chunk'larni (allaqachon cosine balliga ko'ra saralangan deb
+    faraz qilinadi) YUQORIDAN pastga qarab qo'shib boradi, har safar
+    joriy token yig'indisini tekshirib. Byudjetga sig'maydigan chunk
+    uchrasa — TO'XTAYDI (keyingi, balki balandroq ballli bo'lmagan
+    chunk'larni ham sinab ko'rmaydi — bu chunk'lar allaqachon ball
+    bo'yicha saralangani uchun keyingilari ham kamroq mos)."""
+    available = token_budget - reserved_for_answer - reserved_for_instruction
+    if available <= 0:
+        raise ValueError("token_budget juda kichik — javob va ko'rsatma uchun joy qolmadi")
+
+    selected: list[dict] = []
+    used = 0
+    for chunk in chunks:
+        chunk_tokens = estimate_tokens(chunk["text"])
+        if used + chunk_tokens > available:
+            break
+        selected.append(chunk)
+        used += chunk_tokens
+    return selected
 
 
 if __name__ == "__main__":
-    print("Bu modul faqat namuna kodini o'z ichiga oladi — DB'ga ulanmaydi.")
-    print("O'Z loyihangizda ishlatish uchun PGVECTOR_SETUP_SQL'ni migratsiya sifatida ishga tushiring.")
-    print(PGVECTOR_SETUP_SQL)
+    # Cosine balliga ko'ra allaqachon saralangan chunk'lar namunasi:
+    ranked_chunks = [
+        {"heading": "1", "text": "A" * 800, "score": 0.91},   # ~200 token
+        {"heading": "2", "text": "B" * 1200, "score": 0.85},  # ~300 token
+        {"heading": "3", "text": "C" * 2000, "score": 0.60},  # ~500 token
+        {"heading": "4", "text": "D" * 400, "score": 0.40},   # ~100 token
+    ]
+
+    # Kichik byudjet (masalan 700 token) bilan sinaymiz:
+    fitted = fit_chunks_to_budget(ranked_chunks, token_budget=700)
+    print(f"Byudjet=700 tokenda {len(fitted)} ta chunk sig'di:")
+    for c in fitted:
+        print(f"  heading={c['heading']} score={c['score']} ~{estimate_tokens(c['text'])} token")
+
+    # Kattaroq byudjet bilan solishtirish:
+    fitted_big = fit_chunks_to_budget(ranked_chunks, token_budget=2000)
+    print(f"\nByudjet=2000 tokenda {len(fitted_big)} ta chunk sig'di.")
