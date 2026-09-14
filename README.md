@@ -1,60 +1,76 @@
 
-# Token byudjetini dinamik boshqarish: chunk'larni cosine balliga ko'ra
-# saralab, byudjetga sig'guncha qo'shib borish.
+# Suhbat xotirasi bilan RAG: chat tarixini saqlash, savolni qayta yozish
+# (query rewriting) va 8-darsdagi rag_answer() bilan birlashtirish.
 
 from __future__ import annotations
+from dataclasses import dataclass, field
+
+from app.services.grok_ai_client import call_chain, ProviderError
 
 
-def estimate_tokens(text: str) -> int:
-    """Taxminiy token soni — aniq tokenizator o'rniga tezkor baholash
-    (~4 belgi = 1 token). Production'da tiktoken kabi haqiqiy
-    tokenizatordan foydalaning; bu FAQAT tezkor taxmin."""
-    return max(1, len(text) // 4)
+@dataclass(frozen=True)
+class ChatTurn:
+    """Bitta savol-javob juftligi — immutable (o'zgarmas), 2-darsdagi
+    kabi yangi holatni MUTATSIYA qilish o'rniga yangi nusxa yaratamiz."""
+    question: str
+    answer: str
 
 
-def fit_chunks_to_budget(
-    chunks: list[dict],
-    *,
-    token_budget: int,
-    reserved_for_answer: int = 300,
-    reserved_for_instruction: int = 60,
-) -> list[dict]:
-    """Chunk'larni (allaqachon cosine balliga ko'ra saralangan deb
-    faraz qilinadi) YUQORIDAN pastga qarab qo'shib boradi, har safar
-    joriy token yig'indisini tekshirib. Byudjetga sig'maydigan chunk
-    uchrasa — TO'XTAYDI (keyingi, balki balandroq ballli bo'lmagan
-    chunk'larni ham sinab ko'rmaydi — bu chunk'lar allaqachon ball
-    bo'yicha saralangani uchun keyingilari ham kamroq mos)."""
-    available = token_budget - reserved_for_answer - reserved_for_instruction
-    if available <= 0:
-        raise ValueError("token_budget juda kichik — javob va ko'rsatma uchun joy qolmadi")
+@dataclass(frozen=True)
+class ConversationMemory:
+    """Suhbat xotirasi — faqat OXIRGI max_turns juftlikni saqlaydi.
+    Immutable: add_turn() joriy obyektni o'zgartirmaydi, YANGI nusxa
+    qaytaradi."""
+    turns: tuple[ChatTurn, ...] = field(default_factory=tuple)
+    max_turns: int = 5
 
-    selected: list[dict] = []
-    used = 0
-    for chunk in chunks:
-        chunk_tokens = estimate_tokens(chunk["text"])
-        if used + chunk_tokens > available:
-            break
-        selected.append(chunk)
-        used += chunk_tokens
-    return selected
+    def add_turn(self, question: str, answer: str) -> "ConversationMemory":
+        new_turns = (*self.turns, ChatTurn(question, answer))
+        if len(new_turns) > self.max_turns:
+            new_turns = new_turns[-self.max_turns:]  # eng eskisini "unutish"
+        return ConversationMemory(turns=new_turns, max_turns=self.max_turns)
+
+    def as_history_text(self) -> str:
+        if not self.turns:
+            return "(hozircha suhbat tarixi yo'q)"
+        return "\n".join(f"Savol: {t.question}\nJavob: {t.answer}" for t in self.turns)
 
 
-if __name__ == "__main__":
-    # Cosine balliga ko'ra allaqachon saralangan chunk'lar namunasi:
-    ranked_chunks = [
-        {"heading": "1", "text": "A" * 800, "score": 0.91},   # ~200 token
-        {"heading": "2", "text": "B" * 1200, "score": 0.85},  # ~300 token
-        {"heading": "3", "text": "C" * 2000, "score": 0.60},  # ~500 token
-        {"heading": "4", "text": "D" * 400, "score": 0.40},   # ~100 token
-    ]
+async def rewrite_query(new_question: str, memory: ConversationMemory) -> str:
+    """Chat tarixidan foydalanib, "uning", "u" kabi ishoralarni
+    to'liq, mustaqil savolga aylantiradi. Agar tarix bo'sh bo'lsa,
+    LLM'ni chaqirmasdan savolni o'zgarishsiz qaytaradi (keraksiz
+    chaqiruvdan saqlanish)."""
+    if not memory.turns:
+        return new_question
 
-    # Kichik byudjet (masalan 700 token) bilan sinaymiz:
-    fitted = fit_chunks_to_budget(ranked_chunks, token_budget=700)
-    print(f"Byudjet=700 tokenda {len(fitted)} ta chunk sig'di:")
-    for c in fitted:
-        print(f"  heading={c['heading']} score={c['score']} ~{estimate_tokens(c['text'])} token")
+    prompt = (
+        "Quyidagi suhbat tarixidan foydalanib, OXIRGI savolni to'liq, "
+        "mustaqil (tarixsiz ham tushunarli) savolga qayta yoz. Faqat "
+        "qayta yozilgan savolni qaytar, boshqa hech narsa yozma.\n\n"
+        f"TARIX:\n{memory.as_history_text()}\n\n"
+        f"OXIRGI SAVOL: {new_question}"
+    )
+    rewritten, _, _, _ = await call_chain(prompt, max_tokens=100)
+    return rewritten.strip() or new_question
 
-    # Kattaroq byudjet bilan solishtirish:
-    fitted_big = fit_chunks_to_budget(ranked_chunks, token_budget=2000)
-    print(f"\nByudjet=2000 tokenda {len(fitted_big)} ta chunk sig'di.")
+
+async def chat_with_memory(new_question: str, memory: ConversationMemory, index: list[dict]) -> tuple[str, ConversationMemory]:
+    """To'liq oqim: savolni qayta yozish -> retrieve -> augment ->
+    generate -> xotirani yangilash (yangi, immutable nusxa qaytariladi)."""
+    from math import sqrt  # noqa: F401 — retrieve() 8-darsdagidek ishlatiladi deb faraz qilinadi
+
+    full_question = await rewrite_query(new_question, memory)
+
+    # 8-darsdagi retrieve/build_augmented_prompt shu yerda chaqiriladi deb faraz qilamiz:
+    # chunks = retrieve(full_question, index)
+    # prompt = build_augmented_prompt(full_question, chunks) + memory.as_history_text()
+    prompt = f"TARIX:\n{memory.as_history_text()}\n\nSAVOL: {full_question}"
+
+    try:
+        answer, _, _, _ = await call_chain(prompt, max_tokens=400)
+    except ProviderError as e:
+        answer = f"AI xizmati vaqtincha ishlamayapti: {e}"
+
+    new_memory = memory.add_turn(new_question, answer)
+    return answer, new_memory
